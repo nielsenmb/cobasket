@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cobasket"
+version = "0.1.0"
+description = "Find and backtest cointegrated stock baskets"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "yfinance",
+    "statsmodels",
+    "scipy",
+    "matplotlib",
+    "pyarrow",
+    "lxml",
+    "scikit-learn",
+]
+
+[project.scripts]
+cobasket-backtest = "cobasket.cli:backtest_cmd"
+cobasket-screen = "cobasket.cli:screen_cmd"
+cobasket-pca-screen = "cobasket.cli:pca_screen_cmd"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cobasket"]
