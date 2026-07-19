@@ -75,3 +75,44 @@ Two screening approaches, same downstream confirmation + backtest step:
   basket over time (no walk-forward re-estimation yet).
 - `yfinance` can be rate-limited or flaky for large universes -- if
   `cobasket-screen` fails partway through, try a smaller ticker slice first.
+
+## Data layer
+
+Stage 1 introduces a validated adjusted-price data interface:
+
+```python
+from cobasket.data import DataManager
+
+manager = DataManager(cache_dir="price_cache")
+prices = manager.prices(
+    ["AAPL", "MSFT", "GOOG"],
+    period="2y",
+)
+
+print(prices.head())
+print(manager.last_metadata)
+```
+
+The manager downloads adjusted closing prices in batches, stores each ticker in
+its own parquet cache file, removes unusable symbols without discarding valid
+ones, aligns trading dates, and validates the returned table. Adjusted prices
+account for stock splits and dividends, making historical price changes more
+comparable through time.
+
+For explicit dates, set `period=None`:
+
+```python
+prices = manager.prices(
+    ["AAPL", "MSFT"],
+    period=None,
+    start="2023-01-01",
+    end="2025-01-01",
+)
+```
+
+Run the offline test suite with:
+
+```bash
+pip install -e ".[test]"
+pytest
+```

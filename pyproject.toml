@@ -26,4 +26,11 @@ cobasket-screen = "cobasket.cli:screen_cmd"
 cobasket-pca-screen = "cobasket.cli:pca_screen_cmd"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/cobasket"]
+packages = ["cobasket"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

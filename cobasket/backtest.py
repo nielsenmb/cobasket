@@ -17,7 +17,7 @@ def backtest(prices, weights, signal, cost_bps=10):
     cost_bps: round-trip transaction cost in basis points (1 bps = 0.01%)
               charged whenever the position changes.
     """
-    spread_returns = prices.pct_change().values @ weights
+    spread_returns = (prices.diff().fillna(0)).values @ weights
     spread_returns = pd.Series(spread_returns, index=prices.index)
 
     # shift signal by 1 day: you trade on today's close using yesterday's
