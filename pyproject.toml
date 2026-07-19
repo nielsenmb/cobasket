@@ -30,6 +30,7 @@ packages = ["cobasket"]
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+notebook = ["jupyterlab>=4", "ipykernel>=6"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
