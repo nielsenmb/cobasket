@@ -116,3 +116,123 @@ Run the offline test suite with:
 pip install -e ".[test]"
 pytest
 ```
+
+## Stage 2: spread accounting
+
+CoBasket now treats Johansen weights as a direction rather than as directly
+tradable portfolio weights. The weights are normalized by their absolute sum,
+then converted into fixed share units whose initial gross exposure is one
+capital unit. This makes the backtest dimensionally consistent:
+
+```python
+from cobasket.backtest import run_backtest
+from cobasket.cointegration import build_spread, johansen_test
+from cobasket.signals import zscore_signal
+
+result = johansen_test(prices, verbose=False)
+spread, weights = build_spread(prices, result)
+z_score, signal = zscore_signal(spread)
+backtest = run_backtest(prices, weights, signal, cost_bps=10)
+
+print(backtest.units)
+print(backtest.sharpe)
+print(backtest.equity.tail())
+```
+
+The spread-position convention is:
+
+- `+1`: hold the asset legs in the direction of the fitted weight vector
+  (long the spread);
+- `-1`: reverse every leg (short the spread);
+- `0`: hold no spread position.
+
+The executable notebook in `notebooks/01_data_and_basic_workflow.ipynb` explains
+these terms and works through the current data, cointegration, signal, and
+backtest APIs.
+
+## Long-only decision support
+
+Cobasket 0.3 begins separating statistical evidence from investment actions.
+Cointegration is now treated as one relative-value evidence source rather than a
+direct instruction to execute a long/short trade.
+
+```python
+from cobasket.data import DataManager
+from cobasket.evidence import (
+    cointegration_evidence,
+    recommendation_table,
+    recommend_assets,
+)
+
+prices = DataManager().prices(["AAPL", "MSFT"], period="2y")
+result = cointegration_evidence(prices, window=60)
+
+recommendations = recommend_assets(
+    result.asset_evidence,
+    holdings={"AAPL": 2.0},
+)
+print(recommendation_table(recommendations))
+```
+
+A positive evidence score means an asset appears relatively cheap within the
+fitted basket. A negative score means relatively expensive. These scores are
+bounded diagnostics, **not calibrated probabilities** and not estimates of
+intrinsic company value. Recommendation thresholds are configurable decision
+rules and should eventually be calibrated using walk-forward, out-of-sample
+results.
+
+## Walk-forward calibration and persistent watchlists
+
+Cobasket keeps the **selection universe** separate from the **current portfolio**.
+A ticker remains in a `BasketWatchlist` even when its held quantity becomes zero,
+so it continues to receive fresh `Buy`, `Watch`, `Wait`, or `Avoid buying`
+recommendations and can later become a re-entry candidate.
+
+```python
+from cobasket.evidence import (
+    BasketWatchlist,
+    evaluate_watchlist,
+    select_candidate_baskets,
+    watchlist_from_candidates,
+)
+
+# `universe_prices` contains the stocks considered during initial selection.
+candidates = select_candidate_baskets(
+    universe_prices,
+    market_ticker="SPY",
+)
+watchlist = watchlist_from_candidates(candidates, top_n=5)
+watchlist.save("portfolio_watchlist.json")
+
+# A sold stock remains in the watchlist when its quantity is set to zero.
+evaluation = evaluate_watchlist(
+    current_prices,
+    watchlist,
+    holdings={"AAPL": 0.0, "MSFT": 3.0},
+)
+```
+
+Walk-forward calibration repeatedly fits the model using only information that
+would have been available on each historical date, then measures subsequent
+relative performance:
+
+```python
+from cobasket.evidence import (
+    calibrate_evidence,
+    fit_probability_calibration,
+    walk_forward_evidence,
+)
+
+records = walk_forward_evidence(
+    basket_prices,
+    train_window=252,
+    z_window=60,
+    horizon=20,
+    step=5,
+)
+calibration = fit_probability_calibration(records, horizon=20)
+```
+
+The resulting probability answers a specific relative question: whether the
+stock outperforms the equal-weight return of its basket over the selected
+horizon. It is not the probability that the stock price rises in absolute terms.

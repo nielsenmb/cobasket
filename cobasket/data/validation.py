@@ -9,7 +9,22 @@ from .exceptions import ValidationError
 
 
 def validate_prices(prices: pd.DataFrame, *, allow_missing: bool = False) -> None:
-    """Validate a price table, raising :class:`ValidationError` on failure."""
+    """Validate a cleaned price table against the data-layer contract.
+
+    Parameters
+    ----------
+    prices
+        Candidate adjusted-close table.
+    allow_missing
+        Permit NaN observations when ``True``. Infinite and non-positive finite
+        values remain invalid.
+
+    Raises
+    ------
+    ValidationError
+        If the table is empty, malformed, non-numeric, non-positive, or contains
+        disallowed missing values.
+    """
     if not isinstance(prices, pd.DataFrame):
         raise ValidationError("prices must be a pandas DataFrame")
     if prices.empty:

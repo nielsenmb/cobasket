@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cobasket"
-version = "0.1.0"
-description = "Find and backtest cointegrated stock baskets"
+version = "0.3.0"
+description = "Transparent cointegration research and long-only decision support"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

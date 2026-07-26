@@ -44,6 +44,27 @@ class DataManager:
         cache_max_age_days: float | None = 1.0,
         download_batch_size: int = 100,
     ) -> None:
+        """Initialize a data manager.
+
+        Parameters
+        ----------
+        cache_dir
+            Root directory used for per-ticker cache files.
+        downloader
+            Optional function compatible with ``yfinance.download``. This is
+            primarily useful for tests and alternative data providers.
+        cache_max_age_days
+            Maximum reusable cache age. ``None`` disables age expiry.
+        download_batch_size
+            Maximum number of uncached tickers requested in one call.
+
+        Raises
+        ------
+        ValueError
+            If ``download_batch_size`` is less than one.
+        ImportError
+            If live downloading is requested but ``yfinance`` is unavailable.
+        """
         if download_batch_size < 1:
             raise ValueError("download_batch_size must be at least 1")
 
@@ -71,11 +92,40 @@ class DataManager:
         force_refresh: bool = False,
         min_coverage: float = 1.0,
     ) -> pd.DataFrame:
-        """Return an aligned adjusted-close table for ``tickers``.
+        """Return an aligned adjusted-close table for a set of tickers.
 
-        Specify either ``period`` or an explicit ``start``/``end`` range.
+        Parameters
+        ----------
+        tickers
+            Asset symbols to retrieve.
+        period
+            Relative history specification accepted by ``yfinance``. Set to
+            ``None`` when using explicit dates.
+        start, end
+            Optional explicit date bounds.
+        force_refresh
+            Ignore reusable cache files when ``True``.
+        min_coverage
+            Minimum fraction of dates required for each retained ticker.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Clean, aligned, validated adjusted closing prices.
+
+        Raises
+        ------
+        ValueError
+            If tickers or date-range arguments are invalid.
+        DownloadError
+            If no usable symbols can be retrieved.
+        ValidationError
+            If downloaded data fail validation or coverage requirements.
+
+        Notes
+        -----
         Cached symbols are loaded independently. Uncached symbols are downloaded
-        in batches, then split into one cache file per symbol.
+        in batches and then split into one cache file per symbol.
         """
         normalized = self._normalize_tickers(tickers)
         self._validate_range(period=period, start=start, end=end)
@@ -151,6 +201,27 @@ class DataManager:
         start: str | None,
         end: str | None,
     ) -> pd.DataFrame:
+        """Download one batch of symbols from the configured provider.
+
+        Parameters
+        ----------
+        tickers
+            Symbols included in the request.
+        period
+            Relative history specification.
+        start, end
+            Optional explicit date bounds.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Raw provider response.
+
+        Raises
+        ------
+        DownloadError
+            If the provider raises an exception or returns an empty table.
+        """
         kwargs: dict[str, object] = {
             "tickers": list(tickers) if len(tickers) > 1 else tickers[0],
             "auto_adjust": True,
@@ -176,7 +247,25 @@ class DataManager:
 
     @staticmethod
     def _extract_close(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
-        """Extract one symbol's adjusted Close series from yfinance layouts."""
+        """Extract one symbol's closing-price series from provider layouts.
+
+        Parameters
+        ----------
+        raw
+            Raw table returned by ``yfinance.download`` or a compatible provider.
+        ticker
+            Symbol to extract.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Single-column price table named after ``ticker``.
+
+        Raises
+        ------
+        DownloadError
+            If a closing-price field or requested ticker cannot be identified.
+        """
         if not isinstance(raw, pd.DataFrame) or raw.empty:
             raise DownloadError(f"download returned an empty table for {ticker}")
 
@@ -209,6 +298,23 @@ class DataManager:
 
     @staticmethod
     def _normalize_tickers(tickers: Sequence[str]) -> tuple[str, ...]:
+        """Normalize, deduplicate, and validate ticker symbols.
+
+        Parameters
+        ----------
+        tickers
+            User-supplied ticker sequence.
+
+        Returns
+        -------
+        tuple of str
+            Uppercase symbols in first-occurrence order.
+
+        Raises
+        ------
+        ValueError
+            If no non-empty symbols are supplied.
+        """
         normalized = tuple(
             dict.fromkeys(str(t).strip().upper() for t in tickers if str(t).strip())
         )
@@ -220,6 +326,20 @@ class DataManager:
     def _validate_range(
         *, period: str | None, start: str | None, end: str | None
     ) -> None:
+        """Validate mutually exclusive relative and explicit date ranges.
+
+        Parameters
+        ----------
+        period
+            Relative history specification.
+        start, end
+            Optional explicit date bounds.
+
+        Raises
+        ------
+        ValueError
+            If both range styles are mixed or an explicit range lacks ``start``.
+        """
         if period is not None and (start is not None or end is not None):
             raise ValueError("specify either period or start/end, not both")
         if period is None and start is None:
@@ -227,6 +347,20 @@ class DataManager:
 
     @staticmethod
     def _batches(items: Sequence[str], size: int):
+        """Yield fixed-size tuples from a sequence.
+
+        Parameters
+        ----------
+        items
+            Symbols to divide into batches.
+        size
+            Maximum batch length.
+
+        Yields
+        ------
+        tuple of str
+            Consecutive symbol batches.
+        """
         for start in range(0, len(items), size):
             yield tuple(items[start : start + size])
 
@@ -238,6 +372,21 @@ class DataManager:
         cache_hits: Sequence[str],
         downloaded: Sequence[str],
     ) -> None:
+        """Store provenance metadata for the most recent request.
+
+        Parameters
+        ----------
+        requested
+            Requested symbols.
+        returned
+            Symbols present in the final aligned table.
+        failed
+            Symbols that failed download, validation, or alignment.
+        cache_hits
+            Symbols loaded from cache.
+        downloaded
+            Symbols retrieved from the provider.
+        """
         self.last_metadata = PriceMetadata(
             requested_tickers=tuple(requested),
             returned_tickers=tuple(returned),

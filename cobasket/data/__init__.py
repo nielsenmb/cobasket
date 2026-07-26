@@ -1,4 +1,4 @@
-"""Reliable adjusted-price data access with per-ticker caching."""
+"""Reliable adjusted-price access with per-ticker caching."""
 
 from __future__ import annotations
 
@@ -22,7 +22,24 @@ def cached_download(
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
     force_refresh: bool = False,
 ) -> pd.DataFrame:
-    """Compatibility wrapper returning unaligned per-ticker adjusted closes."""
+    """Fetch adjusted closing prices while preserving the legacy API.
+
+    Parameters
+    ----------
+    tickers
+        Asset symbols to retrieve.
+    period
+        Relative history specification accepted by ``yfinance``.
+    cache_dir
+        Root directory used for cache files.
+    force_refresh
+        Ignore reusable cache entries when ``True``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Aligned adjusted closing prices for usable symbols.
+    """
     manager = DataManager(cache_dir=cache_dir)
     return manager.prices(
         tickers,
@@ -37,8 +54,27 @@ def fetch_prices(
     period: str,
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
 ) -> pd.DataFrame:
-    """Fetch a small basket on its common trading dates."""
-    return DataManager(cache_dir=cache_dir).prices(tickers, period=period, min_coverage=1.0)
+    """Fetch a small basket on dates shared by every retained ticker.
+
+    Parameters
+    ----------
+    tickers
+        Asset symbols to retrieve.
+    period
+        Relative history specification accepted by ``yfinance``.
+    cache_dir
+        Root directory used for cache files.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Complete-case adjusted closing prices.
+    """
+    return DataManager(cache_dir=cache_dir).prices(
+        tickers,
+        period=period,
+        min_coverage=1.0,
+    )
 
 
 def fetch_universe(
@@ -47,10 +83,30 @@ def fetch_universe(
     market_ticker: str = "SPY",
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
 ) -> pd.DataFrame:
-    """Fetch a universe plus market proxy, dropping tickers below 90% coverage."""
+    """Fetch a large universe plus a market proxy.
+
+    Parameters
+    ----------
+    tickers
+        Asset symbols to retrieve.
+    period
+        Relative history specification accepted by ``yfinance``.
+    market_ticker
+        Common-market proxy appended to the request.
+    cache_dir
+        Root directory used for cache files.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Adjusted prices after removing tickers below 90 percent coverage and
+        retaining common dates.
+    """
     all_tickers = [*tickers, market_ticker]
     return DataManager(cache_dir=cache_dir).prices(
-        all_tickers, period=period, min_coverage=0.9
+        all_tickers,
+        period=period,
+        min_coverage=0.9,
     )
 
 

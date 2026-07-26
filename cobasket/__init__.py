@@ -1,3 +1,3 @@
-"""cobasket: find and backtest cointegrated stock baskets."""
+"""Find and backtest cointegrated stock baskets."""
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"

@@ -12,6 +12,16 @@ from cobasket.plotting import plot_dendrogram, plot_loadings_2d, plot_scree
 
 
 def backtest_cmd():
+    """Run the single-basket backtest command-line interface.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
     parser = argparse.ArgumentParser(description="Backtest a single named basket of tickers.")
     parser.add_argument("tickers", nargs="+", help="Ticker symbols, e.g. XOM CVX COP OXY")
     parser.add_argument("--period", default="2y", help="History length, e.g. 2y, 5y (default: 2y)")
@@ -35,6 +45,16 @@ def backtest_cmd():
 
 
 def screen_cmd():
+    """Run the correlation-clustering universe screen.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
     parser = argparse.ArgumentParser(description="Screen a large universe for cointegrated baskets.")
     parser.add_argument(
         "--universe", default="sp500", choices=["sp500"],
@@ -75,6 +95,16 @@ def screen_cmd():
 
 
 def pca_screen_cmd():
+    """Run the PCA-loading universe screen.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
     parser = argparse.ArgumentParser(
         description="PCA-based screen for cointegrated baskets, with diagnostic plots."
     )

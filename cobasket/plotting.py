@@ -1,7 +1,9 @@
-"""
-Plotting helpers. All functions save a PNG and return the path, so they
-can be called standalone or chained in a CLI command.
-"""
+"""Reusable plotting helpers for PCA and basket diagnostics."""
+
+from __future__ import annotations
+
+from os import PathLike
+from typing import Mapping, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,114 +11,187 @@ import pandas as pd
 from scipy.cluster.hierarchy import dendrogram
 
 
-def plot_scree(pca, path="pca_scree.png"):
+def plot_scree(pca, path: str | PathLike[str] = "pca_scree.png"):
+    """Save a scree plot of per-component and cumulative PCA variance.
+
+    Parameters
+    ----------
+    pca
+        Fitted scikit-learn PCA estimator.
+    path
+        Output image path.
+
+    Returns
+    -------
+    str or os.PathLike
+        The supplied output path.
     """
-    Scree plot: variance explained per PC, plus cumulative. The same plot
-    you'd make after PCA on any dataset -- look for the 'elbow' to judge
-    how many PCs represent real structure vs noise.
-    """
-    var_ratio = pca.explained_variance_ratio_
-    cumulative = np.cumsum(var_ratio)
+    variance_ratio = pca.explained_variance_ratio_
+    cumulative = np.cumsum(variance_ratio)
 
-    fig, ax1 = plt.subplots(figsize=(8, 5))
-    x = np.arange(1, len(var_ratio) + 1)
-    ax1.bar(x, var_ratio, color="steelblue", alpha=0.7, label="Per-PC variance")
-    ax1.set_xlabel("Principal component")
-    ax1.set_ylabel("Explained variance ratio", color="steelblue")
-    ax1.set_xticks(x)
+    figure, primary_axis = plt.subplots(figsize=(8, 5))
+    x = np.arange(1, len(variance_ratio) + 1)
+    primary_axis.bar(x, variance_ratio, alpha=0.7, label="Per-PC variance")
+    primary_axis.set_xlabel("Principal component")
+    primary_axis.set_ylabel("Explained variance ratio")
+    primary_axis.set_xticks(x)
 
-    ax2 = ax1.twinx()
-    ax2.plot(x, cumulative, color="darkorange", marker="o", label="Cumulative")
-    ax2.set_ylabel("Cumulative explained variance", color="darkorange")
-    ax2.set_ylim(0, 1.05)
+    secondary_axis = primary_axis.twinx()
+    secondary_axis.plot(x, cumulative, marker="o", label="Cumulative")
+    secondary_axis.set_ylabel("Cumulative explained variance")
+    secondary_axis.set_ylim(0, 1.05)
 
-    plt.title("PCA scree plot")
-    fig.tight_layout()
-    plt.savefig(path, dpi=150)
-    plt.close(fig)
+    primary_axis.set_title("PCA scree plot")
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
     return path
 
 
-def plot_loadings_2d(loadings, pc_x="PC2", pc_y="PC3", basket_labels=None, path="pca_loadings.png"):
-    """
-    Scatter of stock loadings on two PCs (skip PC1 by default -- it's
-    almost always the market and just spreads everything along one
-    direction; PC2 vs PC3 usually shows more interesting structure).
+def plot_loadings_2d(
+    loadings: pd.DataFrame,
+    pc_x: str = "PC2",
+    pc_y: str = "PC3",
+    basket_labels: Mapping[str, int] | None = None,
+    path: str | PathLike[str] = "pca_loadings.png",
+):
+    """Save a two-dimensional scatter plot of PCA asset loadings.
 
-    basket_labels: optional dict {ticker: cluster_id} to color points by
-    their assigned cluster, so you can see visually whether the clusters
-    found downstream actually look like sensible groups in loading-space.
+    Parameters
+    ----------
+    loadings
+        Assets in rows and principal-component loadings in columns.
+    pc_x, pc_y
+        Component names plotted on the horizontal and vertical axes.
+    basket_labels
+        Optional mapping from ticker symbol to cluster identifier.
+    path
+        Output image path.
+
+    Returns
+    -------
+    str or os.PathLike
+        The supplied output path.
     """
-    fig, ax = plt.subplots(figsize=(9, 9))
+    figure, axis = plt.subplots(figsize=(9, 9))
 
     if basket_labels:
-        cluster_ids = [basket_labels.get(t, -1) for t in loadings.index]
-        scatter = ax.scatter(
-            loadings[pc_x], loadings[pc_y], c=cluster_ids, cmap="tab20", s=40
-        )
+        cluster_ids = [basket_labels.get(str(ticker), -1) for ticker in loadings.index]
+        axis.scatter(loadings[pc_x], loadings[pc_y], c=cluster_ids, s=40)
     else:
-        ax.scatter(loadings[pc_x], loadings[pc_y], s=40, color="steelblue")
+        axis.scatter(loadings[pc_x], loadings[pc_y], s=40)
 
-    # label a subset of points so it doesn't get unreadable -- all points
-    # if the universe is small, otherwise just the extremes on either axis
     if len(loadings) <= 60:
-        to_label = loadings.index
+        labels = loadings.index
     else:
-        extremes = pd.concat([
-            loadings[pc_x].nlargest(10), loadings[pc_x].nsmallest(10),
-            loadings[pc_y].nlargest(10), loadings[pc_y].nsmallest(10),
-        ])
-        to_label = extremes.index.unique()
+        extremes = pd.concat(
+            [
+                loadings[pc_x].nlargest(10),
+                loadings[pc_x].nsmallest(10),
+                loadings[pc_y].nlargest(10),
+                loadings[pc_y].nsmallest(10),
+            ]
+        )
+        labels = extremes.index.unique()
 
-    for ticker in to_label:
-        ax.annotate(ticker, (loadings.loc[ticker, pc_x], loadings.loc[ticker, pc_y]),
-                    fontsize=7, alpha=0.8)
+    for ticker in labels:
+        axis.annotate(
+            ticker,
+            (loadings.loc[ticker, pc_x], loadings.loc[ticker, pc_y]),
+            fontsize=7,
+            alpha=0.8,
+        )
 
-    ax.axhline(0, color="grey", lw=0.5)
-    ax.axvline(0, color="grey", lw=0.5)
-    ax.set_xlabel(f"{pc_x} loading")
-    ax.set_ylabel(f"{pc_y} loading")
-    ax.set_title(f"Stock loadings: {pc_x} vs {pc_y}")
-    fig.tight_layout()
-    plt.savefig(path, dpi=150)
-    plt.close(fig)
+    axis.axhline(0, linewidth=0.5)
+    axis.axvline(0, linewidth=0.5)
+    axis.set_xlabel(f"{pc_x} loading")
+    axis.set_ylabel(f"{pc_y} loading")
+    axis.set_title(f"Stock loadings: {pc_x} vs {pc_y}")
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
     return path
 
 
-def plot_dendrogram(Z, labels, path="cluster_dendrogram.png", distance_threshold=None):
+def plot_dendrogram(
+    linkage_matrix: np.ndarray,
+    labels: Sequence[str],
+    path: str | PathLike[str] = "cluster_dendrogram.png",
+    distance_threshold: float | None = None,
+):
+    """Save a hierarchical-clustering dendrogram.
+
+    Parameters
+    ----------
+    linkage_matrix
+        SciPy linkage matrix.
+    labels
+        Labels associated with the original observations.
+    path
+        Output image path.
+    distance_threshold
+        Optional clustering cut height drawn as a horizontal line.
+
+    Returns
+    -------
+    str or os.PathLike
+        The supplied output path.
     """
-    Dendrogram of the clustering step (works for either the correlation-
-    distance linkage from cointegration.py or the loading-distance linkage
-    from pca.py). Draw the cut line if a distance_threshold is given, so
-    you can see exactly which clusters resulted from that threshold.
-    """
-    fig, ax = plt.subplots(figsize=(max(10, len(labels) * 0.15), 6))
-    dendrogram(Z, labels=list(labels), ax=ax, leaf_rotation=90, leaf_font_size=6)
+    figure, axis = plt.subplots(figsize=(max(10, len(labels) * 0.15), 6))
+    dendrogram(
+        linkage_matrix,
+        labels=list(labels),
+        ax=axis,
+        leaf_rotation=90,
+        leaf_font_size=6,
+    )
     if distance_threshold is not None:
-        ax.axhline(distance_threshold, color="r", ls="--", label=f"cut = {distance_threshold}")
-        ax.legend()
-    ax.set_title("Hierarchical clustering dendrogram")
-    ax.set_ylabel("Distance")
-    fig.tight_layout()
-    plt.savefig(path, dpi=150)
-    plt.close(fig)
+        axis.axhline(
+            distance_threshold,
+            linestyle="--",
+            label=f"cut = {distance_threshold}",
+        )
+        axis.legend()
+    axis.set_title("Hierarchical clustering dendrogram")
+    axis.set_ylabel("Distance")
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
     return path
 
 
-def plot_basket_diagnostics(basket_result, path="basket_diagnostics.png"):
+def plot_basket_diagnostics(
+    basket_result: Mapping[str, object],
+    path: str | PathLike[str] = "basket_diagnostics.png",
+):
+    """Save prices, spread, z-score, and equity diagnostics for a basket.
+
+    Parameters
+    ----------
+    basket_result
+        Dictionary returned by ``backtest_single_basket``.
+    path
+        Output image path.
+
+    Returns
+    -------
+    str or os.PathLike
+        The supplied output path.
     """
-    The 4-panel view already used in the single-basket backtest CLI
-    command (prices / spread / z-score / equity curve), pulled out here
-    so it can be reused from anywhere.
-    """
-    fig, axes = plt.subplots(4, 1, figsize=(10, 10), sharex=True)
+    figure, axes = plt.subplots(4, 1, figsize=(10, 10), sharex=True)
     basket_result["trading_prices"].plot(ax=axes[0], title="Prices (trading window)")
-    basket_result["trading_spread"].plot(ax=axes[1], title="Spread (frozen weights)")
+    basket_result["trading_spread"].plot(
+        ax=axes[1],
+        title="Spread (frozen weights)",
+    )
     basket_result["z"].plot(ax=axes[2], title="Z-score / signal")
-    axes[2].axhline(2, color="r", ls="--")
-    axes[2].axhline(-2, color="r", ls="--")
-    basket_result["equity"].plot(ax=axes[3], title="Strategy equity curve (starting at 1.0)")
-    fig.tight_layout()
-    plt.savefig(path, dpi=150)
-    plt.close(fig)
+    axes[2].axhline(2, linestyle="--")
+    axes[2].axhline(-2, linestyle="--")
+    basket_result["equity"].plot(
+        ax=axes[3],
+        title="Strategy equity curve (starting at 1.0)",
+    )
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
     return path

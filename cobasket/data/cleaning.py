@@ -1,4 +1,4 @@
-"""Pure functions for cleaning price tables."""
+"""Pure functions for cleaning and aligning price tables."""
 
 from __future__ import annotations
 
@@ -7,11 +7,28 @@ import pandas as pd
 
 
 def clean_prices(prices: pd.DataFrame) -> pd.DataFrame:
-    """Return a consistently indexed, numeric price table.
+    """Convert a raw price table to a consistent numeric representation.
 
-    The function deliberately does not fill missing observations. Filling prices
-    can create artificial zero-return intervals, so alignment policy is left to
-    the caller.
+    Parameters
+    ----------
+    prices
+        Raw table with dates in the index and tickers in columns.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Sorted, timezone-naive, floating-point price table with duplicate dates
+        and columns removed.
+
+    Notes
+    -----
+    Missing observations are not filled because forward filling can create
+    artificial zero-return intervals.
+
+    Raises
+    ------
+    TypeError
+        If ``prices`` is not a pandas DataFrame.
     """
     if not isinstance(prices, pd.DataFrame):
         raise TypeError("prices must be a pandas DataFrame")
@@ -26,17 +43,29 @@ def clean_prices(prices: pd.DataFrame) -> pd.DataFrame:
     cleaned = cleaned.loc[:, ~cleaned.columns.duplicated(keep="last")]
     cleaned = cleaned.apply(pd.to_numeric, errors="coerce").astype(float)
     cleaned = cleaned.replace([np.inf, -np.inf], np.nan)
-    cleaned = cleaned.dropna(axis=1, how="all")
-    return cleaned
+    return cleaned.dropna(axis=1, how="all")
 
 
 def align_prices(prices: pd.DataFrame, *, min_coverage: float = 1.0) -> pd.DataFrame:
-    """Drop sparse tickers and return rows shared by the remaining tickers.
+    """Remove sparse tickers and retain dates shared by the survivors.
 
-    ``min_coverage`` is the fraction of dates on which a ticker must have a
-    valid price. A value of 0.9 means a ticker may be missing at most 10% of the
-    available dates. After sparse columns are removed, rows containing any
-    remaining missing value are dropped.
+    Parameters
+    ----------
+    prices
+        Clean price table that may contain missing observations.
+    min_coverage
+        Minimum fraction of dates on which each retained ticker must have a
+        finite price.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Complete-case price table after sparse columns are removed.
+
+    Raises
+    ------
+    ValueError
+        If ``min_coverage`` is outside ``(0, 1]``.
     """
     if not 0 < min_coverage <= 1:
         raise ValueError("min_coverage must lie in the interval (0, 1]")
