@@ -115,47 +115,61 @@ def rolling_basket_robustness(
     for end in range(window, len(clean) + 1, step):
         sample = clean.iloc[end - window : end]
         try:
-            result = johansen_test(sample, det_order=det_order, k_ar_diff=k_ar_diff)
-            weights = pd.Series(result.weights, index=sample.columns, dtype=float)
-            weights /= weights.abs().sum()
-            spread = build_spread(sample, weights.to_numpy())
+            result = johansen_test(
+                sample,
+                det_order=det_order,
+                k_ar_diff=k_ar_diff,
+                verbose=False,
+            )
+            spread, weight_values = build_spread(sample, result)
+            weights = pd.Series(weight_values, index=sample.columns, dtype=float)
             half_life = mean_reversion_half_life(spread)
             drift = (
                 float((weights - previous_weights).abs().sum())
                 if previous_weights is not None
                 else 0.0
             )
-            trace_ratio = float(result.trace_statistic / result.critical_value_95)
+            critical_value = float(result.cvt[0, 1])
+            trace_ratio = float(result.lr1[0] / critical_value)
             stable = bool(
                 trace_ratio >= min_trace_ratio
                 and np.isfinite(half_life)
                 and half_life <= max_half_life
                 and drift <= max_weight_drift
             )
-            rows.append({
-                "date": sample.index[-1],
-                "trace_ratio": trace_ratio,
-                "half_life": half_life,
-                "weight_drift": drift,
-                "stable": stable,
-                **{f"weight_{ticker}": float(weights.loc[ticker]) for ticker in weights.index},
-            })
+            rows.append(
+                {
+                    "date": sample.index[-1],
+                    "trace_ratio": trace_ratio,
+                    "half_life": half_life,
+                    "weight_drift": drift,
+                    "stable": stable,
+                    **{
+                        f"weight_{ticker}": float(weights.loc[ticker])
+                        for ticker in weights.index
+                    },
+                }
+            )
             previous_weights = weights
         except (ValueError, np.linalg.LinAlgError):
-            rows.append({
-                "date": sample.index[-1],
-                "trace_ratio": np.nan,
-                "half_life": np.nan,
-                "weight_drift": np.nan,
-                "stable": False,
-            })
+            rows.append(
+                {
+                    "date": sample.index[-1],
+                    "trace_ratio": np.nan,
+                    "half_life": np.nan,
+                    "weight_drift": np.nan,
+                    "stable": False,
+                }
+            )
 
     rolling = pd.DataFrame(rows).set_index("date")
     if rolling.empty:
         raise ValueError("no rolling robustness fits were produced")
     latest = rolling.iloc[-1]
     successful = rolling["trace_ratio"].notna()
-    stable_fraction = float(rolling.loc[successful, "stable"].mean()) if successful.any() else 0.0
+    stable_fraction = (
+        float(rolling.loc[successful, "stable"].mean()) if successful.any() else 0.0
+    )
     break_detected = not bool(latest["stable"])
     warnings: list[str] = []
     if latest["trace_ratio"] < min_trace_ratio or pd.isna(latest["trace_ratio"]):
