@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cobasket"
-version = "0.3.0"
+version = "0.4.0"
 description = "Transparent cointegration research and long-only decision support"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,6 +25,7 @@ cobasket-backtest = "cobasket.cli:backtest_cmd"
 cobasket-screen = "cobasket.cli:screen_cmd"
 cobasket-pca-screen = "cobasket.cli:pca_screen_cmd"
 cobasket-report = "cobasket.report_cli:main"
+cobasket-gui = "cobasket.gui:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cobasket"]
@@ -32,6 +33,7 @@ packages = ["cobasket"]
 [project.optional-dependencies]
 test = ["pytest>=7"]
 notebook = ["jupyterlab>=4", "ipykernel>=6"]
+gui = ["PyQt6>=6.6"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

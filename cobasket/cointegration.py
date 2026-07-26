@@ -221,8 +221,9 @@ def cluster_candidates(
 
     correlation = residual_returns.corr()
     distance = (1.0 - correlation).clip(lower=0.0, upper=2.0)
-    np.fill_diagonal(distance.values, 0.0)
-    condensed = squareform(distance.to_numpy(), checks=False)
+    distance_values = distance.to_numpy(dtype=float, copy=True)
+    np.fill_diagonal(distance_values, 0.0)
+    condensed = squareform(distance_values, checks=False)
     linkage_matrix = linkage(condensed, method="average")
 
     cluster_ids = fcluster(
