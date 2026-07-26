@@ -9,6 +9,7 @@ import pandas as pd
 
 from cobasket.cointegration import build_spread, johansen_test
 from cobasket.evidence.cointegration import rolling_z_score
+from cobasket.robustness import BasketRobustnessResult, rolling_basket_robustness
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,8 @@ class BasketInvestigation:
         Rank-zero trace statistic divided by its 95 percent critical value.
     latest_z_score
         Latest finite rolling z-score.
+    robustness
+        Optional rolling stability diagnostics when enough history is available.
     """
 
     tickers: tuple[str, ...]
@@ -43,6 +46,7 @@ class BasketInvestigation:
     weights: pd.Series
     trace_ratio: float
     latest_z_score: float
+    robustness: BasketRobustnessResult | None = None
 
 
 def investigate_basket(prices: pd.DataFrame, *, window: int = 60) -> BasketInvestigation:
@@ -58,7 +62,7 @@ def investigate_basket(prices: pd.DataFrame, *, window: int = 60) -> BasketInves
     Returns
     -------
     BasketInvestigation
-        Prices, spread, z-score, weights, and Johansen diagnostic strength.
+        Prices, spread, z-score, weights, current strength, and rolling stability.
 
     Raises
     ------
@@ -84,6 +88,18 @@ def investigate_basket(prices: pd.DataFrame, *, window: int = 60) -> BasketInves
     trace_ratio = float(result.lr1[0] / critical)
     normalized = clean.divide(clean.iloc[0])
 
+    robustness = None
+    robustness_window = min(252, max(60, len(clean) // 2))
+    if len(clean) >= robustness_window:
+        try:
+            robustness = rolling_basket_robustness(
+                clean,
+                window=robustness_window,
+                step=max(10, robustness_window // 6),
+            )
+        except (ValueError, np.linalg.LinAlgError):
+            robustness = None
+
     return BasketInvestigation(
         tickers=tuple(str(column) for column in clean.columns),
         prices=clean,
@@ -93,4 +109,5 @@ def investigate_basket(prices: pd.DataFrame, *, window: int = 60) -> BasketInves
         weights=pd.Series(weights, index=clean.columns, name="weight", dtype=float),
         trace_ratio=trace_ratio,
         latest_z_score=latest_z,
+        robustness=robustness,
     )
