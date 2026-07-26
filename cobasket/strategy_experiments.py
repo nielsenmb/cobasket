@@ -20,17 +20,7 @@ from cobasket.strategy_rules import (
 
 @dataclass(frozen=True)
 class ExperimentSplit:
-    """Chronological train, validation, and test intervals.
-
-    Parameters
-    ----------
-    train
-        Training interval, inclusive at both ends.
-    validation
-        Validation interval used to compare candidate strategies.
-    test
-        Untouched interval used once for final evaluation.
-    """
+    """Chronological train, validation, and test intervals."""
 
     train: tuple[pd.Timestamp, pd.Timestamp]
     validation: tuple[pd.Timestamp, pd.Timestamp]
@@ -38,11 +28,10 @@ class ExperimentSplit:
 
     def __post_init__(self) -> None:
         """Validate chronological, non-overlapping intervals."""
-        intervals = tuple((pd.Timestamp(start), pd.Timestamp(end)) for start, end in (
-            self.train,
-            self.validation,
-            self.test,
-        ))
+        intervals = tuple(
+            (pd.Timestamp(start), pd.Timestamp(end))
+            for start, end in (self.train, self.validation, self.test)
+        )
         for start, end in intervals:
             if start > end:
                 raise ValueError("split interval start must not follow its end")
@@ -60,22 +49,7 @@ class ExperimentSplit:
         train_fraction: float = 0.50,
         validation_fraction: float = 0.25,
     ) -> "ExperimentSplit":
-        """Construct chronological intervals from fractional sample sizes.
-
-        Parameters
-        ----------
-        index
-            Ordered observation dates.
-        train_fraction
-            Fraction assigned to training.
-        validation_fraction
-            Fraction assigned to validation. The remainder is the test interval.
-
-        Returns
-        -------
-        ExperimentSplit
-            Chronological, non-overlapping intervals.
-        """
+        """Construct chronological intervals from fractional sample sizes."""
         dates = pd.DatetimeIndex(index).sort_values().unique()
         if len(dates) < 12:
             raise ValueError("at least 12 observations are required for a three-way split")
@@ -84,7 +58,10 @@ class ExperimentSplit:
         if train_fraction + validation_fraction >= 1.0:
             raise ValueError("training and validation fractions must leave a test interval")
         train_end = max(1, int(np.floor(len(dates) * train_fraction)))
-        validation_end = max(train_end + 1, int(np.floor(len(dates) * (train_fraction + validation_fraction))))
+        validation_end = max(
+            train_end + 1,
+            int(np.floor(len(dates) * (train_fraction + validation_fraction))),
+        )
         if validation_end >= len(dates):
             raise ValueError("split fractions leave no test observations")
         return cls(
@@ -107,25 +84,12 @@ class ExperimentSplit:
 
 @dataclass(frozen=True)
 class StrategyExperimentConfig:
-    """Settings controlling strategy selection and experiment safeguards.
-
-    Parameters
-    ----------
-    selection_metric
-        Validation metric maximized when choosing the final strategy.
-    initial_cash
-        Starting capital supplied independently to each interval backtest.
-    maximum_candidates
-        Maximum number of strategies permitted in one experiment.
-    minimum_validation_observations
-        Minimum number of price observations in the validation interval.
-    minimum_test_observations
-        Minimum number of price observations in the final test interval.
-    """
+    """Settings controlling strategy selection and experiment safeguards."""
 
     selection_metric: str = "sharpe_ratio"
     initial_cash: float = 10_000.0
     maximum_candidates: int = 25
+    minimum_train_observations: int = 20
     minimum_validation_observations: int = 20
     minimum_test_observations: int = 20
 
@@ -144,7 +108,11 @@ class StrategyExperimentConfig:
             raise ValueError("initial_cash must be positive")
         if self.maximum_candidates < 1:
             raise ValueError("maximum_candidates must be positive")
-        if self.minimum_validation_observations < 2 or self.minimum_test_observations < 2:
+        if min(
+            self.minimum_train_observations,
+            self.minimum_validation_observations,
+            self.minimum_test_observations,
+        ) < 2:
             raise ValueError("minimum interval sizes must be at least two")
 
 
@@ -156,10 +124,12 @@ class StrategyExperimentResult:
     ----------
     split
         Chronological intervals used by the experiment.
+    train_table
+        Candidate performance on the training interval. This is diagnostic only.
     validation_table
-        Candidate performance on the validation interval.
+        Candidate performance used for strategy selection.
     test_table
-        Selected-strategy and benchmark performance on the test interval.
+        Selected-strategy and benchmark performance on the untouched test interval.
     selected_strategy
         Strategy chosen using validation data only.
     interval_results
@@ -169,6 +139,7 @@ class StrategyExperimentResult:
     """
 
     split: ExperimentSplit
+    train_table: pd.DataFrame
     validation_table: pd.DataFrame
     test_table: pd.DataFrame
     selected_strategy: StrategyRules
@@ -176,20 +147,10 @@ class StrategyExperimentResult:
     warnings: tuple[str, ...]
 
     def save(self, directory: str | Path) -> Path:
-        """Write experiment tables and metadata to a directory.
-
-        Parameters
-        ----------
-        directory
-            Output directory.
-
-        Returns
-        -------
-        pathlib.Path
-            Created output directory.
-        """
+        """Write experiment tables and metadata to a directory."""
         output = Path(directory)
         output.mkdir(parents=True, exist_ok=True)
+        self.train_table.to_csv(output / "train_results.csv")
         self.validation_table.to_csv(output / "validation_results.csv")
         self.test_table.to_csv(output / "test_results.csv")
         self.selected_strategy.save(output / "selected_strategy.json")
@@ -210,20 +171,7 @@ def bounded_parameter_grid(
     *,
     maximum_combinations: int = 25,
 ) -> tuple[dict[str, object], ...]:
-    """Expand a small parameter grid while enforcing a hard search limit.
-
-    Parameters
-    ----------
-    parameters
-        Mapping from parameter name to candidate values.
-    maximum_combinations
-        Hard limit on generated combinations.
-
-    Returns
-    -------
-    tuple of dict
-        Cartesian-product parameter combinations.
-    """
+    """Expand a small parameter grid while enforcing a hard search limit."""
     if maximum_combinations < 1:
         raise ValueError("maximum_combinations must be positive")
     if not parameters:
@@ -266,9 +214,7 @@ def _slice_tables(
 ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
     """Slice prices and metrics to one inclusive interval without filling data."""
     start, end = interval
-    sliced_prices = prices.loc[start:end]
-    sliced_metrics = {name: table.loc[start:end] for name, table in metrics.items()}
-    return sliced_prices, sliced_metrics
+    return prices.loc[start:end], {name: table.loc[start:end] for name, table in metrics.items()}
 
 
 def _summary_row(result: RuleBacktestResult) -> dict[str, float]:
@@ -295,15 +241,38 @@ def _benchmark_rows(prices: pd.DataFrame, initial_cash: float) -> list[dict[str,
     rows: list[dict[str, object]] = []
     for name, equity in (("benchmark_equal_weight", equal_weight), ("benchmark_cash", cash)):
         metrics = _performance_metrics(equity, 252)
-        rows.append({
-            "strategy": name,
-            **metrics,
-            "ending_value": float(equity.iloc[-1]),
-            "profit": float(equity.iloc[-1] - equity.iloc[0]),
-            "transaction_costs": 0.0,
-            "trade_count": 0.0,
-        })
+        rows.append(
+            {
+                "strategy": name,
+                **metrics,
+                "ending_value": float(equity.iloc[-1]),
+                "profit": float(equity.iloc[-1] - equity.iloc[0]),
+                "transaction_costs": 0.0,
+                "trade_count": 0.0,
+            }
+        )
     return rows
+
+
+def _run_candidates(
+    prices: pd.DataFrame,
+    metrics: Mapping[str, pd.DataFrame],
+    strategies: Sequence[StrategyRules],
+    initial_cash: float,
+) -> tuple[pd.DataFrame, dict[str, RuleBacktestResult]]:
+    """Run all candidate strategies on one isolated interval."""
+    results: dict[str, RuleBacktestResult] = {}
+    rows: list[dict[str, object]] = []
+    for strategy in strategies:
+        result = run_rule_strategy_backtest(
+            prices,
+            metrics,
+            strategy,
+            initial_cash=initial_cash,
+        )
+        results[strategy.name] = result
+        rows.append({"strategy": strategy.name, **_summary_row(result)})
+    return pd.DataFrame(rows).set_index("strategy"), results
 
 
 def run_strategy_experiment(
@@ -314,10 +283,11 @@ def run_strategy_experiment(
     *,
     config: StrategyExperimentConfig | None = None,
 ) -> StrategyExperimentResult:
-    """Select a strategy on validation data and evaluate it once on test data.
+    """Select on validation data and evaluate the winner once on test data.
 
-    Candidate rankings use the validation interval only. Test results are not
-    consulted when choosing the selected strategy.
+    Training results are reported for model-development diagnostics. Candidate
+    ranking uses validation results only. Test results are never consulted during
+    strategy selection.
     """
     config = config or StrategyExperimentConfig()
     clean = prices.astype(float).dropna(how="any").sort_index()
@@ -332,29 +302,34 @@ def run_strategy_experiment(
     if len({strategy.name for strategy in strategies}) != len(strategies):
         raise ValueError("strategy names must be unique")
 
+    train_prices, train_metrics = _slice_tables(clean, metrics, split.train)
     validation_prices, validation_metrics = _slice_tables(clean, metrics, split.validation)
     test_prices, test_metrics = _slice_tables(clean, metrics, split.test)
+    if len(train_prices) < config.minimum_train_observations:
+        raise ValueError("training interval is too short")
     if len(validation_prices) < config.minimum_validation_observations:
         raise ValueError("validation interval is too short")
     if len(test_prices) < config.minimum_test_observations:
         raise ValueError("test interval is too short")
 
-    validation_results: dict[str, RuleBacktestResult] = {}
-    validation_rows: list[dict[str, object]] = []
-    for strategy in strategies:
-        result = run_rule_strategy_backtest(
-            validation_prices,
-            validation_metrics,
-            strategy,
-            initial_cash=config.initial_cash,
-        )
-        validation_results[strategy.name] = result
-        validation_rows.append({"strategy": strategy.name, **_summary_row(result)})
-    validation_table = pd.DataFrame(validation_rows).set_index("strategy")
+    train_table, train_results = _run_candidates(
+        train_prices,
+        train_metrics,
+        strategies,
+        config.initial_cash,
+    )
+    validation_table, validation_results = _run_candidates(
+        validation_prices,
+        validation_metrics,
+        strategies,
+        config.initial_cash,
+    )
 
-    scores = validation_table[config.selection_metric].copy()
-    if config.selection_metric in {"maximum_drawdown", "annualized_volatility"}:
-        selected_name = str(scores.idxmax() if config.selection_metric == "maximum_drawdown" else scores.idxmin())
+    scores = validation_table[config.selection_metric]
+    if config.selection_metric == "maximum_drawdown":
+        selected_name = str(scores.idxmax())
+    elif config.selection_metric == "annualized_volatility":
+        selected_name = str(scores.idxmin())
     else:
         selected_name = str(scores.idxmax())
     selected_strategy = next(item for item in strategies if item.name == selected_name)
@@ -374,23 +349,26 @@ def run_strategy_experiment(
         warnings.append(
             "More than 10 candidate strategies were compared; the best validation result may reflect multiple-testing noise."
         )
-    validation_length = len(validation_prices)
-    if len(strategies) > max(3, validation_length // 20):
+    if len(strategies) > max(3, len(validation_prices) // 20):
         warnings.append(
             "The number of candidate strategies is large relative to the validation sample."
         )
+    if train_table[config.selection_metric].idxmax() != selected_name and config.selection_metric not in {
+        "annualized_volatility",
+    }:
+        warnings.append("The training and validation intervals prefer different strategies.")
     if selected_test.backtest.metrics["trade_count"] == 0:
         warnings.append("The selected strategy made no trades in the test interval.")
 
+    ascending = config.selection_metric == "annualized_volatility"
     return StrategyExperimentResult(
         split=split,
-        validation_table=validation_table.sort_values(
-            config.selection_metric,
-            ascending=config.selection_metric in {"annualized_volatility"},
-        ),
+        train_table=train_table.sort_values(config.selection_metric, ascending=ascending),
+        validation_table=validation_table.sort_values(config.selection_metric, ascending=ascending),
         test_table=test_table,
         selected_strategy=selected_strategy,
         interval_results={
+            "train": train_results,
             "validation": validation_results,
             "test": {selected_name: selected_test},
         },
