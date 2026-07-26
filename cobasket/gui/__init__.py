@@ -8,13 +8,20 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["CobasketDashboard", "main"]
+__all__ = ["CobasketDashboard", "EditableCobasketDashboard", "main"]
 
 
 def __getattr__(name: str) -> Any:
     """Load PyQt dashboard objects only when explicitly requested."""
-    if name in __all__:
-        from .dashboard import CobasketDashboard, main
+    if name == "CobasketDashboard":
+        from .dashboard import CobasketDashboard
 
-        return {"CobasketDashboard": CobasketDashboard, "main": main}[name]
+        return CobasketDashboard
+    if name in {"EditableCobasketDashboard", "main"}:
+        from .editable_dashboard import EditableCobasketDashboard, main
+
+        return {
+            "EditableCobasketDashboard": EditableCobasketDashboard,
+            "main": main,
+        }[name]
     raise AttributeError(name)
