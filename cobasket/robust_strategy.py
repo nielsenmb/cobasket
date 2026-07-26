@@ -1,11 +1,17 @@
-"""Robustness-aware filtering for historical basket strategies."""
+"""Robustness-aware filtering for basket selection and historical strategies."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Sequence
 
 import pandas as pd
 
+from cobasket.evidence import (
+    BasketCandidate,
+    run_long_only_policy_backtest,
+    walk_forward_evidence,
+)
 from cobasket.robustness import rolling_basket_robustness
 from cobasket.strategy_simulation import (
     BasketStrategyConfig,
@@ -13,12 +19,11 @@ from cobasket.strategy_simulation import (
     equal_weight_benchmark,
     expanding_calibrated_probabilities,
 )
-from cobasket.evidence import run_long_only_policy_backtest, walk_forward_evidence
 
 
 @dataclass(frozen=True)
 class RobustnessGateConfig:
-    """Thresholds controlling whether historical evidence may trigger trades.
+    """Thresholds controlling whether a basket may trigger decisions.
 
     Parameters
     ----------
@@ -64,6 +69,52 @@ class RobustnessAwareStrategyResult:
     unfiltered: BasketStrategyResult
     stability: pd.DataFrame
     comparison: dict[str, float]
+
+
+def filter_candidate_baskets_by_robustness(
+    candidates: Sequence[BasketCandidate],
+    prices: pd.DataFrame,
+    *,
+    gate: RobustnessGateConfig | None = None,
+) -> tuple[BasketCandidate, ...]:
+    """Retain candidate baskets whose latest relationship is historically stable.
+
+    Parameters
+    ----------
+    candidates
+        Candidate baskets produced by the universe-selection stage.
+    prices
+        Aligned price table containing all candidate tickers.
+    gate
+        Stability thresholds used to accept or reject candidates.
+
+    Returns
+    -------
+    tuple of BasketCandidate
+        Candidates satisfying both the latest-window and stable-fraction limits.
+    """
+    gate = gate or RobustnessGateConfig()
+    if not gate.enabled:
+        return tuple(candidates)
+    accepted: list[BasketCandidate] = []
+    for candidate in candidates:
+        missing = set(candidate.tickers).difference(prices.columns)
+        if missing:
+            continue
+        try:
+            result = rolling_basket_robustness(
+                prices.loc[:, list(candidate.tickers)],
+                window=gate.window,
+                step=gate.step,
+                min_trace_ratio=gate.min_trace_ratio,
+                max_half_life=gate.max_half_life,
+                max_weight_drift=gate.max_weight_drift,
+            )
+        except (ValueError, ArithmeticError):
+            continue
+        if not result.break_detected and result.stable_fraction >= gate.minimum_stable_fraction:
+            accepted.append(candidate)
+    return tuple(accepted)
 
 
 def historical_stability_table(
