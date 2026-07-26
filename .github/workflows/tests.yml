@@ -28,6 +28,7 @@ jobs:
             --ignore=tests/test_gui_smoke.py \
             --ignore=tests/test_investigation_gui.py \
             --ignore=tests/test_validation_gui.py \
+            --ignore=tests/test_history_gui.py \
             2>&1 | tee pytest-core.log
       - name: Upload core test log
         if: failure()
@@ -62,3 +63,4 @@ jobs:
           tests/test_config_editor.py
           tests/test_investigation_gui.py
           tests/test_validation_gui.py
+          tests/test_history_gui.py
