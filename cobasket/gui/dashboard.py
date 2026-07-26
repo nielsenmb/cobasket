@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 import sys
 
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QFileDialog,
     QFormLayout,
@@ -55,7 +56,7 @@ class AnalysisWorker(QObject):
         try:
             config = PortfolioConfig.load(self.config_path)
             report = PortfolioAnalyzer().run(config, force_refresh=self.force_refresh)
-        except Exception as exc:  # GUI boundary: show any backend failure clearly
+        except Exception as exc:  # GUI boundary: display backend failures clearly.
             self.failed.emit(f"{type(exc).__name__}: {exc}")
             return
         self.finished.emit(report)
@@ -120,8 +121,8 @@ class CobasketDashboard(QMainWindow):
         splitter = QSplitter()
         self.table = QTableWidget(0, len(self.columns))
         self.table.setHorizontalHeaderLabels(self.columns)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setStretchLastSection(True)
         splitter.addWidget(self.table)
@@ -253,7 +254,7 @@ class CobasketDashboard(QMainWindow):
 
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(report.tickers))
-        for row, item in enumerate(report.tickers):
+        for source_row, item in enumerate(report.tickers):
             values = (
                 item.ticker,
                 f"{item.held_quantity:g}",
@@ -265,15 +266,17 @@ class CobasketDashboard(QMainWindow):
             )
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(value)
-                cell.setData(256, row)
-                self.table.setItem(row, column, cell)
+                cell.setData(Qt.ItemDataRole.UserRole, source_row)
+                self.table.setItem(source_row, column, cell)
         self.table.resizeColumnsToContents()
         self.table.setSortingEnabled(True)
 
-        if report.warnings:
-            self.warnings_text.setPlainText("\n".join(f"• {item}" for item in report.warnings))
-        else:
-            self.warnings_text.setPlainText("No report-level warnings.")
+        warning_text = (
+            "\n".join(f"• {item}" for item in report.warnings)
+            if report.warnings
+            else "No report-level warnings."
+        )
+        self.warnings_text.setPlainText(warning_text)
         if report.tickers:
             self.table.selectRow(0)
         else:
@@ -286,7 +289,7 @@ class CobasketDashboard(QMainWindow):
         selected = self.table.selectedItems()
         if not selected:
             return
-        source_row = selected[0].data(256)
+        source_row = selected[0].data(Qt.ItemDataRole.UserRole)
         if source_row is None:
             source_row = selected[0].row()
         item = self.report.tickers[int(source_row)]
