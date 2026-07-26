@@ -4,7 +4,15 @@ import pytest
 
 pytest.importorskip("PyQt6")
 
-from cobasket.gui.config_editor import holdings_from_rows, parse_basket_text
+from PyQt6.QtWidgets import QApplication
+
+from cobasket.evidence import BasketWatchlist
+from cobasket.gui.config_editor import (
+    ConfigEditorDialog,
+    holdings_from_rows,
+    parse_basket_text,
+)
+from cobasket.workflow import PortfolioConfig
 
 
 def test_parse_basket_text_normalizes_and_deduplicates():
@@ -36,3 +44,23 @@ def test_holdings_from_rows_rejects_negative_quantities():
     """Long-only holdings cannot contain negative quantities."""
     with pytest.raises(ValueError, match="non-negative"):
         holdings_from_rows([("AAPL", -1.0)])
+
+
+def test_editor_loads_zero_quantity_holdings_and_baskets(tmp_path):
+    """The dialog should retain sold stocks and their monitored basket."""
+    app = QApplication.instance() or QApplication([])
+    watchlist_path = tmp_path / "watchlist.json"
+    BasketWatchlist(baskets=(("AAPL", "MSFT"),)).save(watchlist_path)
+    config_path = tmp_path / "portfolio.json"
+    PortfolioConfig(
+        holdings={"AAPL": 0.0, "MSFT": 2.0},
+        cash=500.0,
+        watchlist_path=str(watchlist_path),
+    ).save(config_path)
+
+    dialog = ConfigEditorDialog(config_path)
+    assert dialog.holdings_table.rowCount() == 2
+    assert dialog.baskets_table.rowCount() == 1
+    assert dialog.cash_spin.value() == 500.0
+    dialog.close()
+    app.processEvents()
