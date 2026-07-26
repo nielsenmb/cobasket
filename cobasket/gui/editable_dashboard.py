@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from .config_editor import ConfigEditorDialog
 from .dashboard import CobasketDashboard
 from .investigation_dialog import BasketInvestigationDialog
+from .strategy_dialog import StrategySimulationDialog
 from .validation_dialog import ValidationDialog
 
 
@@ -26,9 +27,13 @@ class EditableCobasketDashboard(CobasketDashboard):
         investigate_action.triggered.connect(self.investigate_selected_ticker)
         self.table.cellDoubleClicked.connect(lambda *_: self.investigate_selected_ticker())
 
+        simulation_action = portfolio_menu.addAction("Simulate basket strategy…")
+        simulation_action.triggered.connect(self.open_strategy_simulation)
+
         validation_action = portfolio_menu.addAction("Historical validation…")
         validation_action.triggered.connect(self.open_validation)
         self._investigation_dialog: BasketInvestigationDialog | None = None
+        self._strategy_dialog: StrategySimulationDialog | None = None
         self._validation_dialog: ValidationDialog | None = None
 
     def edit_configuration(self) -> None:
@@ -72,6 +77,25 @@ class EditableCobasketDashboard(CobasketDashboard):
             return
         self._investigation_dialog = dialog
         dialog.finished.connect(lambda _: setattr(self, "_investigation_dialog", None))
+        dialog.show()
+
+    def open_strategy_simulation(self) -> None:
+        """Open the end-to-end historical basket strategy simulator."""
+        config_path = Path(self.path_edit.text().strip())
+        if not config_path.exists():
+            QMessageBox.warning(
+                self,
+                "Missing configuration",
+                "Choose an existing portfolio configuration JSON file first.",
+            )
+            return
+        try:
+            dialog = StrategySimulationDialog(config_path, self)
+        except Exception as exc:
+            QMessageBox.critical(self, "Cannot open simulator", str(exc))
+            return
+        self._strategy_dialog = dialog
+        dialog.finished.connect(lambda _: setattr(self, "_strategy_dialog", None))
         dialog.show()
 
     def open_validation(self) -> None:
