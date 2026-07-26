@@ -51,5 +51,5 @@ jobs:
             xauth
       - name: Install package
         run: python -m pip install -e ".[test,gui]"
-      - name: Run GUI smoke test
-        run: xvfb-run -a pytest -q tests/test_gui_smoke.py
+      - name: Run GUI tests
+        run: xvfb-run -a pytest -q tests/test_gui_smoke.py tests/test_config_editor.py
