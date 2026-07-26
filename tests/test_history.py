@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from cobasket.history import RecommendationHistoryStore
 from cobasket.workflow import PortfolioReport, TickerReport
@@ -81,7 +82,7 @@ def test_update_outcomes_adds_available_forward_returns(tmp_path):
     outcomes = store.outcome_history("AAPL")
     assert set(outcomes["horizon"]) == {1, 5}
     one_day = outcomes.loc[outcomes["horizon"] == 1, "forward_return"].iloc[0]
-    assert one_day == 0.01
+    assert one_day == pytest.approx(0.01)
 
 
 def test_tickers_lists_symbols_with_history(tmp_path):
