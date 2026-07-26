@@ -1,4 +1,4 @@
-"""Dashboard extension with editable state and basket investigation tools."""
+"""Dashboard extension with editable state and diagnostic analysis tools."""
 
 from __future__ import annotations
 
@@ -10,10 +10,11 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from .config_editor import ConfigEditorDialog
 from .dashboard import CobasketDashboard
 from .investigation_dialog import BasketInvestigationDialog
+from .validation_dialog import ValidationDialog
 
 
 class EditableCobasketDashboard(CobasketDashboard):
-    """Cobasket dashboard with editing and diagnostic investigation actions."""
+    """Cobasket dashboard with editing, investigation, and validation actions."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -24,7 +25,11 @@ class EditableCobasketDashboard(CobasketDashboard):
         investigate_action = portfolio_menu.addAction("Investigate selected ticker…")
         investigate_action.triggered.connect(self.investigate_selected_ticker)
         self.table.cellDoubleClicked.connect(lambda *_: self.investigate_selected_ticker())
+
+        validation_action = portfolio_menu.addAction("Historical validation…")
+        validation_action.triggered.connect(self.open_validation)
         self._investigation_dialog: BasketInvestigationDialog | None = None
+        self._validation_dialog: ValidationDialog | None = None
 
     def edit_configuration(self) -> None:
         """Open the current portfolio configuration in the editor."""
@@ -67,6 +72,13 @@ class EditableCobasketDashboard(CobasketDashboard):
             return
         self._investigation_dialog = dialog
         dialog.finished.connect(lambda _: setattr(self, "_investigation_dialog", None))
+        dialog.show()
+
+    def open_validation(self) -> None:
+        """Open the historical policy and calibration validation dashboard."""
+        dialog = ValidationDialog(self)
+        self._validation_dialog = dialog
+        dialog.finished.connect(lambda _: setattr(self, "_validation_dialog", None))
         dialog.show()
 
 
