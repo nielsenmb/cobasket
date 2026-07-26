@@ -19,6 +19,10 @@ from .diagnostics import (
     calibration_diagnostics,
     reliability_table,
 )
+from .persistence import (
+    load_probability_calibration,
+    save_probability_calibration,
+)
 from .policy_backtest import LongOnlyPolicy, PolicyBacktestResult, run_long_only_policy_backtest
 from .cointegration import (
     CointegrationEvidenceResult,
@@ -67,12 +71,14 @@ __all__ = [
     "evaluate_watchlist",
     "evidence_table",
     "fit_probability_calibration",
+    "load_probability_calibration",
     "recommend_assets",
     "recommend_calibrated_assets",
     "recommendation_table",
     "reliability_table",
     "run_long_only_policy_backtest",
     "rolling_z_score",
+    "save_probability_calibration",
     "select_candidate_baskets",
     "walk_forward_evidence",
     "watchlist_from_candidates",
