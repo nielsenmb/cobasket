@@ -2,6 +2,8 @@
 
 import pytest
 
+pytest.importorskip("PyQt6")
+
 from cobasket.gui.config_editor import holdings_from_rows, parse_basket_text
 
 
