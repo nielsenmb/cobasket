@@ -15,6 +15,7 @@ from .dashboard import CobasketDashboard
 from .history_dialog import RecommendationHistoryDialog
 from .investigation_dialog import BasketInvestigationDialog
 from .strategy_dialog import StrategySimulationDialog
+from .strategy_experiment_dialog import StrategyExperimentDialog
 from .validation_dialog import ValidationDialog
 
 
@@ -37,11 +38,15 @@ class EditableCobasketDashboard(CobasketDashboard):
         simulation_action = portfolio_menu.addAction("Simulate basket strategy…")
         simulation_action.triggered.connect(self.open_strategy_simulation)
 
+        experiment_action = portfolio_menu.addAction("Strategy experiments…")
+        experiment_action.triggered.connect(self.open_strategy_experiments)
+
         validation_action = portfolio_menu.addAction("Historical validation…")
         validation_action.triggered.connect(self.open_validation)
         self._history_dialog: RecommendationHistoryDialog | None = None
         self._investigation_dialog: BasketInvestigationDialog | None = None
         self._strategy_dialog: StrategySimulationDialog | None = None
+        self._experiment_dialog: StrategyExperimentDialog | None = None
         self._validation_dialog: ValidationDialog | None = None
 
     def _configuration_path(self) -> Path | None:
@@ -144,6 +149,13 @@ class EditableCobasketDashboard(CobasketDashboard):
             return
         self._strategy_dialog = dialog
         dialog.finished.connect(lambda _: setattr(self, "_strategy_dialog", None))
+        dialog.show()
+
+    def open_strategy_experiments(self) -> None:
+        """Open the declarative rule editor and controlled experiment view."""
+        dialog = StrategyExperimentDialog(self)
+        self._experiment_dialog = dialog
+        dialog.finished.connect(lambda _: setattr(self, "_experiment_dialog", None))
         dialog.show()
 
     def open_validation(self) -> None:
