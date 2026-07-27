@@ -1,238 +1,199 @@
-# cobasket
+# Cobasket
 
-Find cointegrated stock baskets and backtest a mean-reverting spread strategy
-against them.
+Cobasket is a Python research and decision-support tool for finding related stock baskets, measuring relative-value evidence, defining explicit long-only trading rules, and testing those rules without using future information.
 
-## Install
+It is intended for learning and research. It does not place trades and should not be treated as financial advice.
+
+## Installation
 
 ```bash
 pip install -e .
 ```
 
-(editable install, so code changes take effect immediately -- good for local dev)
-
-## Usage
-
-Backtest a basket you already have in mind:
-
-```bash
-cobasket-backtest XOM CVX COP OXY --period 2y
-```
-
-Screen the S&P 500 for candidate baskets via correlation clustering (fetches ~500 tickers -- slow the first time, cached afterward):
-
-```bash
-cobasket-screen --period 2y --distance-threshold 0.8
-```
-
-Screen via PCA instead -- decomposes returns into latent factors, removes the market-wide component(s), clusters on factor loadings, and saves diagnostic plots so you can actually see what's going on:
-
-```bash
-cobasket-pca-screen --period 2y --n-remove 1 --distance-threshold 1.5
-```
-
-This produces three PNGs each run:
-- `pca_scree.png` -- variance explained per PC; the "elbow" tells you how many components carry real structure
-- `pca_loadings.png` -- stocks plotted by PC2 vs PC3 loading, colored by cluster; tight separated blobs are good basket candidates, a shapeless cloud means clustering isn't separating well
-- `cluster_dendrogram.png` -- the clustering tree with your `--distance-threshold` cut drawn as a red line, so you can see exactly why stocks ended up in the clusters they did
-
-Both commands cache downloaded price data to `price_cache/` in the current
-directory. Pass `--force-refresh` to `cobasket-screen` to bypass it, or just
-delete the directory.
-
-## Pipeline
-
-Two screening approaches, same downstream confirmation + backtest step:
-
-**Correlation-based (`cobasket-screen`)**
-1. Fetch S&P 500 tickers + SPY as a market proxy
-2. Regress out the SPY return from each stock (removes the common market
-   factor so clustering reflects idiosyncratic co-movement)
-3. Hierarchical clustering on 1-correlation distance of the residuals
-
-**PCA-based (`cobasket-pca-screen`)**
-1. Fetch S&P 500 tickers, standardize returns to unit variance
-2. Run PCA -- lets the data itself define the dominant shared factors,
-   rather than assuming SPY is the right proxy (PC1 is almost always
-   "the market"; later PCs often correspond to sector/rate/commodity
-   exposure)
-3. Remove the top `--n-remove` PCs, leaving idiosyncratic residuals
-4. Cluster stocks by their loadings (coordinates in PC-space) rather
-   than by raw pairwise correlation
-
-**Both then:**
-5. Johansen cointegration test on each cluster (candidates capped at 8
-   members -- Johansen gets unstable with more series than that)
-6. For each confirmed basket: refit weights on the first half of history,
-   backtest on the second half, rank by Sharpe ratio
-
-## Caveats
-
-- This is a research/learning tool, not a production trading system: no
-  slippage modeling beyond a flat bps cost, no position sizing, no risk
-  limits.
-- Cointegration relationships can break down; nothing here re-validates a
-  basket over time (no walk-forward re-estimation yet).
-- `yfinance` can be rate-limited or flaky for large universes -- if
-  `cobasket-screen` fails partway through, try a smaller ticker slice first.
-
-## Data layer
-
-Stage 1 introduces a validated adjusted-price data interface:
-
-```python
-from cobasket.data import DataManager
-
-manager = DataManager(cache_dir="price_cache")
-prices = manager.prices(
-    ["AAPL", "MSFT", "GOOG"],
-    period="2y",
-)
-
-print(prices.head())
-print(manager.last_metadata)
-```
-
-The manager downloads adjusted closing prices in batches, stores each ticker in
-its own parquet cache file, removes unusable symbols without discarding valid
-ones, aligns trading dates, and validates the returned table. Adjusted prices
-account for stock splits and dividends, making historical price changes more
-comparable through time.
-
-For explicit dates, set `period=None`:
-
-```python
-prices = manager.prices(
-    ["AAPL", "MSFT"],
-    period=None,
-    start="2023-01-01",
-    end="2025-01-01",
-)
-```
-
-Run the offline test suite with:
+For development and tests:
 
 ```bash
 pip install -e ".[test]"
 pytest
 ```
 
-## Stage 2: spread accounting
+For the PyQt interface:
 
-CoBasket now treats Johansen weights as a direction rather than as directly
-tradable portfolio weights. The weights are normalized by their absolute sum,
-then converted into fixed share units whose initial gross exposure is one
-capital unit. This makes the backtest dimensionally consistent:
-
-```python
-from cobasket.backtest import run_backtest
-from cobasket.cointegration import build_spread, johansen_test
-from cobasket.signals import zscore_signal
-
-result = johansen_test(prices, verbose=False)
-spread, weights = build_spread(prices, result)
-z_score, signal = zscore_signal(spread)
-backtest = run_backtest(prices, weights, signal, cost_bps=10)
-
-print(backtest.units)
-print(backtest.sharpe)
-print(backtest.equity.tail())
+```bash
+pip install -e ".[gui]"
+cobasket-gui
 ```
 
-The spread-position convention is:
+## Current capabilities
 
-- `+1`: hold the asset legs in the direction of the fitted weight vector
-  (long the spread);
-- `-1`: reverse every leg (short the spread);
-- `0`: hold no spread position.
+Cobasket now supports:
 
-The executable notebook in `notebooks/01_data_and_basic_workflow.ipynb` explains
-these terms and works through the current data, cointegration, signal, and
-backtest APIs.
+- validated adjusted-price downloads and per-ticker caching;
+- correlation- and PCA-based candidate-basket screening;
+- Johansen cointegration tests and fitted spread diagnostics;
+- rolling robustness checks, including trace strength, weight drift, and mean-reversion half-life;
+- persistent holdings and watchlists, including zero-quantity re-entry candidates;
+- calibrated per-ticker probabilities with uncertainty intervals;
+- long-only recommendations and configurable position limits;
+- momentum, trend, volatility, and cointegration metrics;
+- ordered declarative buy, hold, reduce, and sell rules;
+- transaction costs, cash constraints, position sizing, exits, and re-entry;
+- single-split train/validation/test experiments;
+- repeated walk-forward experiments across several market regimes;
+- continuous walk-forward deployment with one account carried through time;
+- recommendation, user-action, and outcome history in SQLite;
+- a PyQt dashboard for live reports, diagnostics, strategy experiments, and backtests.
 
-## Long-only decision support
+## Core workflow
 
-Cobasket 0.3 begins separating statistical evidence from investment actions.
-Cointegration is now treated as one relative-value evidence source rather than a
-direct instruction to execute a long/short trade.
+The intended research flow is:
+
+```text
+Choose a stock universe
+        ↓
+Screen and validate candidate baskets
+        ↓
+Maintain a watchlist and current holdings
+        ↓
+Calculate cointegration and price-based metrics
+        ↓
+Define explicit decision rules
+        ↓
+Select strategies using validation data only
+        ↓
+Evaluate on unseen historical periods
+        ↓
+Generate and store live recommendations
+```
+
+Metrics are observations, not trading instructions. The strategy layer states explicitly how those observations map to portfolio actions.
+
+## Command-line examples
+
+Backtest a basket:
+
+```bash
+cobasket-backtest XOM CVX COP OXY --period 2y
+```
+
+Screen a universe using residual correlation:
+
+```bash
+cobasket-screen --period 2y --distance-threshold 0.8
+```
+
+Screen using PCA factor loadings:
+
+```bash
+cobasket-pca-screen --period 2y --n-remove 1 --distance-threshold 1.5
+```
+
+Generate a live portfolio report:
+
+```bash
+cobasket-report \
+    --portfolio portfolio.json \
+    --watchlist portfolio_watchlist.json \
+    --output report.json
+```
+
+Launch the dashboard:
+
+```bash
+cobasket-gui
+```
+
+## Python example
 
 ```python
 from cobasket.data import DataManager
-from cobasket.evidence import (
-    cointegration_evidence,
-    recommendation_table,
-    recommend_assets,
+from cobasket.price_metrics import build_price_metrics
+from cobasket.strategy_rules import MetricCondition, StrategyRule, StrategyRules
+
+prices = DataManager(cache_dir="price_cache").prices(
+    ["AAPL", "MSFT", "GOOG"],
+    period="5y",
 )
 
-prices = DataManager().prices(["AAPL", "MSFT"], period="2y")
-result = cointegration_evidence(prices, window=60)
+metrics = build_price_metrics(prices)
 
-recommendations = recommend_assets(
-    result.asset_evidence,
-    holdings={"AAPL": 2.0},
-)
-print(recommendation_table(recommendations))
-```
-
-A positive evidence score means an asset appears relatively cheap within the
-fitted basket. A negative score means relatively expensive. These scores are
-bounded diagnostics, **not calibrated probabilities** and not estimates of
-intrinsic company value. Recommendation thresholds are configurable decision
-rules and should eventually be calibrated using walk-forward, out-of-sample
-results.
-
-## Walk-forward calibration and persistent watchlists
-
-Cobasket keeps the **selection universe** separate from the **current portfolio**.
-A ticker remains in a `BasketWatchlist` even when its held quantity becomes zero,
-so it continues to receive fresh `Buy`, `Watch`, `Wait`, or `Avoid buying`
-recommendations and can later become a re-entry candidate.
-
-```python
-from cobasket.evidence import (
-    BasketWatchlist,
-    evaluate_watchlist,
-    select_candidate_baskets,
-    watchlist_from_candidates,
-)
-
-# `universe_prices` contains the stocks considered during initial selection.
-candidates = select_candidate_baskets(
-    universe_prices,
-    market_ticker="SPY",
-)
-watchlist = watchlist_from_candidates(candidates, top_n=5)
-watchlist.save("portfolio_watchlist.json")
-
-# A sold stock remains in the watchlist when its quantity is set to zero.
-evaluation = evaluate_watchlist(
-    current_prices,
-    watchlist,
-    holdings={"AAPL": 0.0, "MSFT": 3.0},
+strategy = StrategyRules(
+    name="probability, trend, and volatility",
+    rules=(
+        StrategyRule(
+            action="sell",
+            conditions=(MetricCondition("probability", "<=", 0.30),),
+            target_weight=0.0,
+        ),
+        StrategyRule(
+            action="buy",
+            conditions=(
+                MetricCondition("probability", ">=", 0.60),
+                MetricCondition("trend", ">=", 0.0),
+                MetricCondition("high_volatility", "==", False),
+            ),
+            target_weight=0.10,
+        ),
+    ),
 )
 ```
 
-Walk-forward calibration repeatedly fits the model using only information that
-would have been available on each historical date, then measures subsequent
-relative performance:
+Rules are evaluated from top to bottom. The first matching rule determines the target portfolio weight. Missing metrics do not match.
 
-```python
-from cobasket.evidence import (
-    calibrate_evidence,
-    fit_probability_calibration,
-    walk_forward_evidence,
-)
+## Historical validation levels
 
-records = walk_forward_evidence(
-    basket_prices,
-    train_window=252,
-    z_window=60,
-    horizon=20,
-    step=5,
-)
-calibration = fit_probability_calibration(records, horizon=20)
-```
+Cobasket provides three increasingly realistic forms of historical evaluation.
 
-The resulting probability answers a specific relative question: whether the
-stock outperforms the equal-weight return of its basket over the selected
-horizon. It is not the probability that the stock price rises in absolute terms.
+### Single controlled split
+
+One chronological training, validation, and test split. Candidate strategies are selected using validation performance; the selected strategy is evaluated once on the untouched test interval.
+
+### Repeated walk-forward evaluation
+
+The entire selection procedure is repeated across several folds. Each fold has its own training, validation, and test periods. This tests whether the preferred strategy and its performance remain stable across market regimes.
+
+### Continuous walk-forward deployment
+
+One simulated brokerage account is carried through successive test periods. Cash and positions persist while Cobasket periodically reselects the strategy. The boundary policy can either retain positions or liquidate them when the selected strategy changes.
+
+All historical decisions execute on the next available price observation rather than the same observation used to calculate the metrics.
+
+## Important terminology
+
+- **Long-only:** Cobasket can hold an asset or cash, but does not require short selling.
+- **Target weight:** the desired fraction of total portfolio value allocated to a ticker.
+- **Fold:** one complete training, validation, and test trial within repeated walk-forward analysis.
+- **Drawdown:** the percentage decline from the portfolio's previous highest value.
+- **Turnover:** how much portfolio value is traded over time; high turnover generally increases costs.
+- **Benchmark:** a simpler comparison strategy, such as equal-weight buy-and-hold or remaining in cash.
+
+The fitted Johansen weight vector defines a synthetic statistical spread. It is not automatically a recommended long-only portfolio allocation.
+
+## GUI workflows
+
+The **Portfolio** menu includes:
+
+- portfolio and watchlist editing;
+- ticker and basket investigation;
+- recommendation history;
+- basket strategy simulation;
+- single-split strategy experiments;
+- repeated walk-forward experiments;
+- continuous walk-forward deployment;
+- historical policy and calibration validation.
+
+The continuous deployment view shows the account equity, benchmark values, drawdown, invested fraction, selected-strategy timeline, trade ledger, decisions, and warnings.
+
+## Notebooks
+
+The notebooks are ordered to follow the development and research workflow. See [`notebooks/README.md`](notebooks/README.md) for the current map.
+
+## Caveats
+
+- Historical profitability does not imply future profitability.
+- Testing many rule sets can overfit noise; use small, pre-declared candidate families.
+- Cointegration relationships and market regimes can break down.
+- Adjusted closing prices do not reproduce intraday execution, bid-ask spreads, taxes, or all broker-specific costs.
+- The equal-weight benchmark is useful but not necessarily the appropriate benchmark for every portfolio.
+- Yahoo Finance downloads can be incomplete or rate-limited; inspect data-quality warnings before interpreting results.
+- Cobasket currently supports research and manual decision support rather than automatic brokerage execution.
