@@ -14,6 +14,7 @@ from .config_editor import ConfigEditorDialog
 from .dashboard import CobasketDashboard
 from .history_dialog import RecommendationHistoryDialog
 from .investigation_dialog import BasketInvestigationDialog
+from .repeated_walk_forward_dialog import RepeatedWalkForwardDialog
 from .strategy_dialog import StrategySimulationDialog
 from .strategy_experiment_dialog import StrategyExperimentDialog
 from .validation_dialog import ValidationDialog
@@ -41,12 +42,16 @@ class EditableCobasketDashboard(CobasketDashboard):
         experiment_action = portfolio_menu.addAction("Strategy experiments…")
         experiment_action.triggered.connect(self.open_strategy_experiments)
 
+        repeated_action = portfolio_menu.addAction("Repeated walk-forward experiments…")
+        repeated_action.triggered.connect(self.open_repeated_walk_forward)
+
         validation_action = portfolio_menu.addAction("Historical validation…")
         validation_action.triggered.connect(self.open_validation)
         self._history_dialog: RecommendationHistoryDialog | None = None
         self._investigation_dialog: BasketInvestigationDialog | None = None
         self._strategy_dialog: StrategySimulationDialog | None = None
         self._experiment_dialog: StrategyExperimentDialog | None = None
+        self._repeated_dialog: RepeatedWalkForwardDialog | None = None
         self._validation_dialog: ValidationDialog | None = None
 
     def _configuration_path(self) -> Path | None:
@@ -156,6 +161,13 @@ class EditableCobasketDashboard(CobasketDashboard):
         dialog = StrategyExperimentDialog(self)
         self._experiment_dialog = dialog
         dialog.finished.connect(lambda _: setattr(self, "_experiment_dialog", None))
+        dialog.show()
+
+    def open_repeated_walk_forward(self) -> None:
+        """Open repeated strategy selection across chronological market regimes."""
+        dialog = RepeatedWalkForwardDialog(self)
+        self._repeated_dialog = dialog
+        dialog.finished.connect(lambda _: setattr(self, "_repeated_dialog", None))
         dialog.show()
 
     def open_validation(self) -> None:
