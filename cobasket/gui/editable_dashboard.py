@@ -11,6 +11,7 @@ from cobasket.history import RecommendationHistoryStore
 from cobasket.workflow import PortfolioReport
 
 from .config_editor import ConfigEditorDialog
+from .continuous_walk_forward_dialog import ContinuousWalkForwardDialog
 from .dashboard import CobasketDashboard
 from .history_dialog import RecommendationHistoryDialog
 from .investigation_dialog import BasketInvestigationDialog
@@ -45,6 +46,9 @@ class EditableCobasketDashboard(CobasketDashboard):
         repeated_action = portfolio_menu.addAction("Repeated walk-forward experiments…")
         repeated_action.triggered.connect(self.open_repeated_walk_forward)
 
+        continuous_action = portfolio_menu.addAction("Continuous walk-forward deployment…")
+        continuous_action.triggered.connect(self.open_continuous_walk_forward)
+
         validation_action = portfolio_menu.addAction("Historical validation…")
         validation_action.triggered.connect(self.open_validation)
         self._history_dialog: RecommendationHistoryDialog | None = None
@@ -52,6 +56,7 @@ class EditableCobasketDashboard(CobasketDashboard):
         self._strategy_dialog: StrategySimulationDialog | None = None
         self._experiment_dialog: StrategyExperimentDialog | None = None
         self._repeated_dialog: RepeatedWalkForwardDialog | None = None
+        self._continuous_dialog: ContinuousWalkForwardDialog | None = None
         self._validation_dialog: ValidationDialog | None = None
 
     def _configuration_path(self) -> Path | None:
@@ -168,6 +173,13 @@ class EditableCobasketDashboard(CobasketDashboard):
         dialog = RepeatedWalkForwardDialog(self)
         self._repeated_dialog = dialog
         dialog.finished.connect(lambda _: setattr(self, "_repeated_dialog", None))
+        dialog.show()
+
+    def open_continuous_walk_forward(self) -> None:
+        """Open continuous strategy reselection with one persistent account."""
+        dialog = ContinuousWalkForwardDialog(self)
+        self._continuous_dialog = dialog
+        dialog.finished.connect(lambda _: setattr(self, "_continuous_dialog", None))
         dialog.show()
 
     def open_validation(self) -> None:
