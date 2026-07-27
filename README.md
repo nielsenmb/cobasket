@@ -17,16 +17,18 @@ pip install -e ".[test]"
 pytest
 ```
 
-For the PyQt interface:
+For notebooks or the PyQt interface:
 
 ```bash
-pip install -e ".[gui]"
+pip install -e ".[notebook,gui]"
 cobasket-gui
 ```
 
+The package version and changes planned for the next release are recorded in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Current capabilities
 
-Cobasket now supports:
+Cobasket supports:
 
 - validated adjusted-price downloads and per-ticker caching;
 - correlation- and PCA-based candidate-basket screening;
@@ -45,8 +47,6 @@ Cobasket now supports:
 - a PyQt dashboard for live reports, diagnostics, strategy experiments, and backtests.
 
 ## Core workflow
-
-The intended research flow is:
 
 ```text
 Choose a stock universe
@@ -68,7 +68,33 @@ Generate and store live recommendations
 
 Metrics are observations, not trading instructions. The strategy layer states explicitly how those observations map to portfolio actions.
 
-## Command-line examples
+## First live report
+
+Copy the example files into a working directory:
+
+```bash
+cp examples/portfolio.json .
+cp examples/portfolio_watchlist.json .
+```
+
+The example starts with no shares held and $10,000 in uninvested cash. Edit the ticker quantities and baskets before treating it as your portfolio state.
+
+Generate a report:
+
+```bash
+cobasket-report \
+    --portfolio portfolio.json \
+    --watchlist portfolio_watchlist.json \
+    --output report.json
+```
+
+Or launch the dashboard:
+
+```bash
+cobasket-gui
+```
+
+## Other command-line workflows
 
 Backtest a basket:
 
@@ -88,33 +114,23 @@ Screen using PCA factor loadings:
 cobasket-pca-screen --period 2y --n-remove 1 --distance-threshold 1.5
 ```
 
-Generate a live portfolio report:
-
-```bash
-cobasket-report \
-    --portfolio portfolio.json \
-    --watchlist portfolio_watchlist.json \
-    --output report.json
-```
-
-Launch the dashboard:
-
-```bash
-cobasket-gui
-```
-
 ## Python example
 
+The stable top-level API covers the main research and reporting interfaces:
+
 ```python
-from cobasket.data import DataManager
-from cobasket.price_metrics import build_price_metrics
-from cobasket.strategy_rules import MetricCondition, StrategyRule, StrategyRules
+from cobasket import (
+    DataManager,
+    MetricCondition,
+    StrategyRule,
+    StrategyRules,
+    build_price_metrics,
+)
 
 prices = DataManager(cache_dir="price_cache").prices(
     ["AAPL", "MSFT", "GOOG"],
     period="5y",
 )
-
 metrics = build_price_metrics(prices)
 
 strategy = StrategyRules(
@@ -186,7 +202,17 @@ The continuous deployment view shows the account equity, benchmark values, drawd
 
 ## Notebooks
 
-The notebooks are ordered to follow the development and research workflow. See [`notebooks/README.md`](notebooks/README.md) for the current map.
+The notebooks are ordered to follow the development and research workflow. See [`notebooks/README.md`](notebooks/README.md) for the current map. CI validates every notebook file and syntax-checks ordinary Python code cells.
+
+## Release checks
+
+Pull requests run:
+
+- the core suite on Python 3.10 and 3.12;
+- notebook structure and code-cell smoke tests;
+- source and wheel builds followed by `twine check`;
+- installation and import from the built wheel;
+- the PyQt suite under Xvfb.
 
 ## Caveats
 

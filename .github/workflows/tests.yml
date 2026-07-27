@@ -20,7 +20,7 @@ jobs:
           cache: pip
       - name: Install package
         run: python -m pip install -e ".[test]"
-      - name: Run core tests
+      - name: Run core and notebook smoke tests
         shell: bash
         run: |
           set -o pipefail
@@ -33,6 +33,17 @@ jobs:
             --ignore=tests/test_repeated_walk_forward_gui.py \
             --ignore=tests/test_continuous_walk_forward_gui.py \
             2>&1 | tee pytest-core.log
+      - name: Build distributions
+        run: python -m build
+      - name: Check distributions
+        run: python -m twine check dist/*
+      - name: Test wheel installation
+        shell: bash
+        run: |
+          python -m venv /tmp/cobasket-wheel
+          /tmp/cobasket-wheel/bin/python -m pip install dist/*.whl
+          /tmp/cobasket-wheel/bin/python -c "import cobasket; print(cobasket.__version__)"
+          /tmp/cobasket-wheel/bin/cobasket-report --help
       - name: Upload core test log
         if: failure()
         uses: actions/upload-artifact@v4
