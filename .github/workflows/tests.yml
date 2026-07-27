@@ -31,6 +31,7 @@ jobs:
             --ignore=tests/test_history_gui.py \
             --ignore=tests/test_strategy_experiment_gui.py \
             --ignore=tests/test_repeated_walk_forward_gui.py \
+            --ignore=tests/test_continuous_walk_forward_gui.py \
             2>&1 | tee pytest-core.log
       - name: Upload core test log
         if: failure()
@@ -68,3 +69,4 @@ jobs:
           tests/test_history_gui.py
           tests/test_strategy_experiment_gui.py
           tests/test_repeated_walk_forward_gui.py
+          tests/test_continuous_walk_forward_gui.py
