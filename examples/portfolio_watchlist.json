@@ -1,0 +1,6 @@
+{
+  "name": "Example technology watchlist",
+  "baskets": [
+    ["AAPL", "MSFT", "GOOGL"]
+  ]
+}
