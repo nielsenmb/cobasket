@@ -159,6 +159,7 @@ def discover_baskets(
     market_ticker: str = "SPY",
     distance_threshold: float = 0.8,
     min_trace_ratio: float = 1.0,
+    max_basket_size: int = 8,
     cost_bps: float = 10.0,
     train_window: int = 252,
     horizon: int = 20,
@@ -188,6 +189,10 @@ def discover_baskets(
         Hierarchical clustering cut height.
     min_trace_ratio
         Current and historical Johansen trace-ratio threshold.
+    max_basket_size
+        Maximum dimension of nested hierarchical candidates sent to Johansen.
+        The default remains eight, but larger correlation neighborhoods are
+        decomposed instead of discarded.
     cost_bps
         Backtest transaction cost in basis points.
     train_window
@@ -211,6 +216,7 @@ def discover_baskets(
         period=period,
         distance_threshold=distance_threshold,
         min_trace_stat_ratio=min_trace_ratio,
+        max_basket_size=max_basket_size,
         market_ticker=market_ticker,
     )
     backtests = rank_confirmed_baskets(confirmed, prices, cost_bps=cost_bps)
