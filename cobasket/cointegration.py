@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Sequence
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -11,6 +12,38 @@ from scipy.spatial.distance import squareform
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 
 from cobasket.data import fetch_universe
+
+
+def _coint_johansen_quiet(values: np.ndarray, det_order: int, k_ar_diff: int):
+    """Run statsmodels' Johansen test while containing a known cast warning.
+
+    Parameters
+    ----------
+    values
+        Two-dimensional price array with observations in rows.
+    det_order
+        Deterministic-term setting passed to statsmodels.
+    k_ar_diff
+        Number of lagged first differences.
+
+    Returns
+    -------
+    statsmodels.tsa.vector_ar.vecm.JohansenTestResult
+        Johansen test result.
+
+    Notes
+    -----
+    Some numerically valid statsmodels fits emit a ``ComplexWarning`` while
+    constructing real-valued trace statistics from intermediate complex-valued
+    eigensystem calculations. Cobasket still validates the returned
+    cointegration vector separately in :func:`normalize_cointegration_weights`.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Casting complex values to real discards the imaginary part",
+        )
+        return coint_johansen(values, det_order, k_ar_diff)
 
 
 def johansen_test(
@@ -50,7 +83,7 @@ def johansen_test(
     if len(price_df) <= k_ar_diff + 2:
         raise ValueError("not enough observations for the requested lag order")
 
-    result = coint_johansen(price_df.to_numpy(dtype=float), det_order, k_ar_diff)
+    result = _coint_johansen_quiet(price_df.to_numpy(dtype=float), det_order, k_ar_diff)
     if verbose:
         print("Trace statistic vs critical values (90%, 95%, 99%):")
         for i, (stat, crit) in enumerate(zip(result.lr1, result.cvt)):
@@ -173,18 +206,19 @@ def remove_market_factor(
     if market_col not in returns:
         raise KeyError(f"market column {market_col!r} is absent")
 
-    market = returns[market_col]
+    market = returns[market_col].to_numpy(dtype=float)
     market_variance = float(np.var(market))
     if market_variance <= np.finfo(float).eps:
         raise ValueError("market return series has zero variance")
 
-    residuals = pd.DataFrame(index=returns.index)
-    for column in returns.columns:
-        if column == market_col:
-            continue
-        beta = np.cov(returns[column], market)[0, 1] / market_variance
-        residuals[column] = returns[column] - beta * market
-    return residuals
+    asset_columns = [column for column in returns.columns if column != market_col]
+    assets = returns.loc[:, asset_columns].to_numpy(dtype=float)
+    centered_market = market - market.mean()
+    centered_assets = assets - assets.mean(axis=0)
+    covariance = np.sum(centered_assets * centered_market[:, None], axis=0) / (len(market) - 1)
+    betas = covariance / market_variance
+    residual_values = assets - market[:, None] * betas[None, :]
+    return pd.DataFrame(residual_values, index=returns.index, columns=asset_columns)
 
 
 def cluster_candidates(
@@ -296,7 +330,7 @@ def screen_universe(
         if len(basket_prices) < 100:
             continue
         try:
-            result = coint_johansen(basket_prices.to_numpy(dtype=float), 0, 1)
+            result = _coint_johansen_quiet(basket_prices.to_numpy(dtype=float), 0, 1)
         except Exception as exc:
             print(f"  Skipping {basket}: {exc}")
             continue
