@@ -10,7 +10,15 @@ import pandas as pd
 from .cleaning import align_prices, clean_prices
 from .exceptions import CacheError, CobasketDataError, DownloadError, ValidationError
 from .manager import DataManager, PriceMetadata
-from .universe import get_sp500_tickers
+from .universe import (
+    UniverseSpec,
+    get_eurostoxx50_tickers,
+    get_ftse100_tickers,
+    get_nasdaq100_tickers,
+    get_sp500_tickers,
+    get_universe,
+    load_custom_tickers,
+)
 from .validation import validate_prices
 
 DEFAULT_CACHE_DIR = "price_cache"
@@ -22,31 +30,9 @@ def cached_download(
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
     force_refresh: bool = False,
 ) -> pd.DataFrame:
-    """Fetch adjusted closing prices while preserving the legacy API.
-
-    Parameters
-    ----------
-    tickers
-        Asset symbols to retrieve.
-    period
-        Relative history specification accepted by ``yfinance``.
-    cache_dir
-        Root directory used for cache files.
-    force_refresh
-        Ignore reusable cache entries when ``True``.
-
-    Returns
-    -------
-    pandas.DataFrame
-        Aligned adjusted closing prices for usable symbols.
-    """
+    """Fetch adjusted closing prices while preserving the legacy API."""
     manager = DataManager(cache_dir=cache_dir)
-    return manager.prices(
-        tickers,
-        period=period,
-        force_refresh=force_refresh,
-        min_coverage=1e-12,
-    )
+    return manager.prices(tickers, period=period, force_refresh=force_refresh, min_coverage=1e-12)
 
 
 def fetch_prices(
@@ -54,27 +40,8 @@ def fetch_prices(
     period: str,
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
 ) -> pd.DataFrame:
-    """Fetch a small basket on dates shared by every retained ticker.
-
-    Parameters
-    ----------
-    tickers
-        Asset symbols to retrieve.
-    period
-        Relative history specification accepted by ``yfinance``.
-    cache_dir
-        Root directory used for cache files.
-
-    Returns
-    -------
-    pandas.DataFrame
-        Complete-case adjusted closing prices.
-    """
-    return DataManager(cache_dir=cache_dir).prices(
-        tickers,
-        period=period,
-        min_coverage=1.0,
-    )
+    """Fetch a small basket on dates shared by every retained ticker."""
+    return DataManager(cache_dir=cache_dir).prices(tickers, period=period, min_coverage=1.0)
 
 
 def fetch_universe(
@@ -83,7 +50,7 @@ def fetch_universe(
     market_ticker: str = "SPY",
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
 ) -> pd.DataFrame:
-    """Fetch a large universe plus a market proxy.
+    """Fetch a large universe plus a configurable market proxy.
 
     Parameters
     ----------
@@ -103,11 +70,7 @@ def fetch_universe(
         retaining common dates.
     """
     all_tickers = [*tickers, market_ticker]
-    return DataManager(cache_dir=cache_dir).prices(
-        all_tickers,
-        period=period,
-        min_coverage=0.9,
-    )
+    return DataManager(cache_dir=cache_dir).prices(all_tickers, period=period, min_coverage=0.9)
 
 
 __all__ = [
@@ -117,12 +80,18 @@ __all__ = [
     "DataManager",
     "DownloadError",
     "PriceMetadata",
+    "UniverseSpec",
     "ValidationError",
     "align_prices",
     "cached_download",
     "clean_prices",
     "fetch_prices",
     "fetch_universe",
+    "get_eurostoxx50_tickers",
+    "get_ftse100_tickers",
+    "get_nasdaq100_tickers",
     "get_sp500_tickers",
+    "get_universe",
+    "load_custom_tickers",
     "validate_prices",
 ]
