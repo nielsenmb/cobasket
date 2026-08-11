@@ -44,11 +44,27 @@ def test_discovery_rejects_transient_high_sharpe_candidate(monkeypatch):
     def fake_metrics(prices, basket, **kwargs):
         if tuple(basket) == ("AAA", "BBB"):
             return {"accepted_evaluations": 2, "possible_evaluations": 20, "persistence": 0.10, "weight_stability": 0.95}
-        return {"accepted_evaluations": 12, "possible_evaluations": 20, "persistence": 0.60, "weight_stability": 0.90}
+        return {"accepted_evaluations": 16, "possible_evaluations": 20, "persistence": 0.80, "weight_stability": 0.90}
 
     monkeypatch.setattr(discovery, "_persistence_metrics", fake_metrics)
     result = discovery.discover_baskets(["AAA", "BBB", "CCC", "DDD"])
     assert tuple(result.table.iloc[0]["basket"]) == ("CCC", "DDD")
-    assert bool(result.table.iloc[0]["usable"])
+    assert result.table.iloc[0]["status"] == "promising"
     transient = result.table[result.table["basket"].apply(tuple) == ("AAA", "BBB")].iloc[0]
-    assert not bool(transient["usable"])
+    assert transient["status"] == "reject"
+
+
+def test_discovery_marks_loose_survivor_borderline():
+    """A basket clearing loose but not promising thresholds should be borderline."""
+    status = discovery._discovery_status(
+        persistence=0.20,
+        accepted_evaluations=10,
+        weight_stability=0.90,
+        sharpe=1.0,
+        min_persistence=0.15,
+        min_weight_stability=0.60,
+        promising_persistence=0.30,
+        promising_evaluations=15,
+        promising_weight_stability=0.80,
+    )
+    assert status == "borderline"
