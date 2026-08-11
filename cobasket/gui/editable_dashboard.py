@@ -72,10 +72,25 @@ class EditableCobasketDashboard(CobasketDashboard):
         except Exception:
             return None
 
+    def _report_path(self) -> Path | None:
+        """Return the selected saved-report path when valid."""
+        text = self.report_path_edit.text().strip()
+        if not text:
+            return None
+        path = Path(text)
+        if not path.exists():
+            return None
+        try:
+            return path if classify_cobasket_json(path) == "report" else None
+        except Exception:
+            return None
+
     def _history_path(self) -> Path:
-        """Return the history database beside the selected configuration file."""
+        """Return the history database beside the best available Cobasket source."""
         config_path = self._configuration_path()
-        directory = config_path.parent if config_path is not None else Path.cwd()
+        report_path = self._report_path()
+        source_path = config_path or report_path
+        directory = source_path.parent if source_path is not None else Path.cwd()
         return directory / "cobasket_history.sqlite"
 
     def _selected_ticker(self) -> str | None:
@@ -96,9 +111,14 @@ class EditableCobasketDashboard(CobasketDashboard):
         QMessageBox.warning(
             self,
             "Portfolio configuration required",
-            f"{action} requires a portfolio configuration JSON file. Choose portfolio.json in the Portfolio configuration row first.",
+            f"{action} requires a portfolio configuration JSON file. "
+            "Choose portfolio.json in the Portfolio configuration row first.",
         )
         return None
+
+    def _show_dialog_error(self, title: str, exc: Exception) -> None:
+        """Display a constructor-time dialog failure without terminating Qt."""
+        QMessageBox.critical(self, title, f"{type(exc).__name__}: {exc}")
 
     def _analysis_finished(self, report: PortfolioReport) -> None:
         """Display and persist a successfully generated live report."""
@@ -117,7 +137,11 @@ class EditableCobasketDashboard(CobasketDashboard):
         path = self._require_configuration("Editing the portfolio and watchlist")
         if path is None:
             return
-        dialog = ConfigEditorDialog(path, self)
+        try:
+            dialog = ConfigEditorDialog(path, self)
+        except Exception as exc:
+            self._show_dialog_error("Cannot open configuration editor", exc)
+            return
         if dialog.exec():
             self.status_label.setText(
                 "Portfolio configuration saved. Run analysis to refresh recommendations."
@@ -135,7 +159,7 @@ class EditableCobasketDashboard(CobasketDashboard):
         try:
             dialog = BasketInvestigationDialog(config_path, ticker, self)
         except Exception as exc:
-            QMessageBox.critical(self, "Cannot investigate ticker", str(exc))
+            self._show_dialog_error("Cannot investigate ticker", exc)
             return
         self._investigation_dialog = dialog
         dialog.finished.connect(lambda _: setattr(self, "_investigation_dialog", None))
@@ -148,7 +172,7 @@ class EditableCobasketDashboard(CobasketDashboard):
                 self._history_path(), ticker=self._selected_ticker(), parent=self
             )
         except Exception as exc:
-            QMessageBox.critical(self, "Cannot open recommendation history", str(exc))
+            self._show_dialog_error("Cannot open recommendation history", exc)
             return
         self._history_dialog = dialog
         dialog.finished.connect(lambda _: setattr(self, "_history_dialog", None))
@@ -162,7 +186,7 @@ class EditableCobasketDashboard(CobasketDashboard):
         try:
             dialog = StrategySimulationDialog(config_path, self)
         except Exception as exc:
-            QMessageBox.critical(self, "Cannot open simulator", str(exc))
+            self._show_dialog_error("Cannot open simulator", exc)
             return
         self._strategy_dialog = dialog
         dialog.finished.connect(lambda _: setattr(self, "_strategy_dialog", None))
@@ -170,28 +194,44 @@ class EditableCobasketDashboard(CobasketDashboard):
 
     def open_strategy_experiments(self) -> None:
         """Open the declarative rule editor and controlled experiment view."""
-        dialog = StrategyExperimentDialog(self)
+        try:
+            dialog = StrategyExperimentDialog(self)
+        except Exception as exc:
+            self._show_dialog_error("Cannot open strategy experiments", exc)
+            return
         self._experiment_dialog = dialog
         dialog.finished.connect(lambda _: setattr(self, "_experiment_dialog", None))
         dialog.show()
 
     def open_repeated_walk_forward(self) -> None:
         """Open repeated strategy selection across chronological market regimes."""
-        dialog = RepeatedWalkForwardDialog(self)
+        try:
+            dialog = RepeatedWalkForwardDialog(self)
+        except Exception as exc:
+            self._show_dialog_error("Cannot open repeated walk-forward experiments", exc)
+            return
         self._repeated_dialog = dialog
         dialog.finished.connect(lambda _: setattr(self, "_repeated_dialog", None))
         dialog.show()
 
     def open_continuous_walk_forward(self) -> None:
         """Open continuous strategy reselection with one persistent account."""
-        dialog = ContinuousWalkForwardDialog(self)
+        try:
+            dialog = ContinuousWalkForwardDialog(self)
+        except Exception as exc:
+            self._show_dialog_error("Cannot open continuous deployment", exc)
+            return
         self._continuous_dialog = dialog
         dialog.finished.connect(lambda _: setattr(self, "_continuous_dialog", None))
         dialog.show()
 
     def open_validation(self) -> None:
         """Open the historical policy and calibration validation dashboard."""
-        dialog = ValidationDialog(self)
+        try:
+            dialog = ValidationDialog(self)
+        except Exception as exc:
+            self._show_dialog_error("Cannot open historical validation", exc)
+            return
         self._validation_dialog = dialog
         dialog.finished.connect(lambda _: setattr(self, "_validation_dialog", None))
         dialog.show()
