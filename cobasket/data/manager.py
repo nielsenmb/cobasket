@@ -125,7 +125,9 @@ class DataManager:
         Notes
         -----
         Cached symbols are loaded independently. Uncached symbols are downloaded
-        in batches and then split into one cache file per symbol.
+        in batches and then split into one cache file per symbol. If a provider
+        rejects an entire multi-symbol batch, Cobasket retries those symbols one
+        at a time so one stale constituent cannot discard the rest of the batch.
         """
         normalized = self._normalize_tickers(tickers)
         self._validate_range(period=period, start=start, end=end)
@@ -150,25 +152,27 @@ class DataManager:
 
         for batch in self._batches(pending, self.download_batch_size):
             try:
-                raw = self._download_batch(
-                    batch, period=period, start=start, end=end
-                )
+                raw = self._download_batch(batch, period=period, start=start, end=end)
             except DownloadError:
-                failed.extend(batch)
+                if len(batch) == 1:
+                    failed.extend(batch)
+                    continue
+                self._retry_individually(
+                    batch,
+                    frames=frames,
+                    downloaded=downloaded,
+                    failed=failed,
+                    period=period,
+                    start=start,
+                    end=end,
+                )
                 continue
 
             for ticker in batch:
-                try:
-                    frame = clean_prices(self._extract_close(raw, ticker))
-                    if frame.empty or ticker not in frame.columns:
-                        raise DownloadError(
-                            f"download returned no adjusted closing prices for {ticker}"
-                        )
-                    validate_prices(frame, allow_missing=True)
-                except (DownloadError, ValidationError):
+                frame = self._validated_ticker_frame(raw, ticker)
+                if frame is None:
                     failed.append(ticker)
                     continue
-
                 path = self.cache.path_for(ticker, period=period, start=start, end=end)
                 self.cache.write(path, frame)
                 frames[ticker] = frame[[ticker]]
@@ -192,6 +196,77 @@ class DataManager:
         failed = list(dict.fromkeys([*failed, *(t for t in normalized if t not in returned)]))
         self._set_metadata(normalized, returned, failed, cache_hits, downloaded)
         return combined
+
+    def _retry_individually(
+        self,
+        tickers: Sequence[str],
+        *,
+        frames: dict[str, pd.DataFrame],
+        downloaded: list[str],
+        failed: list[str],
+        period: str | None,
+        start: str | None,
+        end: str | None,
+    ) -> None:
+        """Retry a provider-rejected batch one ticker at a time.
+
+        Parameters
+        ----------
+        tickers
+            Symbols from the rejected batch.
+        frames
+            Mutable mapping receiving successful price frames.
+        downloaded
+            Mutable list receiving successful downloaded symbols.
+        failed
+            Mutable list receiving unavailable or invalid symbols.
+        period
+            Relative history specification.
+        start, end
+            Optional explicit date bounds.
+        """
+        for ticker in tickers:
+            try:
+                raw = self._download_batch((ticker,), period=period, start=start, end=end)
+            except DownloadError:
+                failed.append(ticker)
+                continue
+            frame = self._validated_ticker_frame(raw, ticker)
+            if frame is None:
+                failed.append(ticker)
+                continue
+            path = self.cache.path_for(ticker, period=period, start=start, end=end)
+            self.cache.write(path, frame)
+            frames[ticker] = frame[[ticker]]
+            downloaded.append(ticker)
+
+    @staticmethod
+    def _validated_ticker_frame(raw: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
+        """Extract and validate one downloaded ticker frame.
+
+        Parameters
+        ----------
+        raw
+            Provider response containing the requested ticker.
+        ticker
+            Symbol to extract.
+
+        Returns
+        -------
+        pandas.DataFrame or None
+            Valid single-ticker frame, or ``None`` if the symbol is unavailable
+            or fails price validation.
+        """
+        try:
+            frame = clean_prices(DataManager._extract_close(raw, ticker))
+            if frame.empty or ticker not in frame.columns:
+                raise DownloadError(
+                    f"download returned no adjusted closing prices for {ticker}"
+                )
+            validate_prices(frame, allow_missing=True)
+        except (DownloadError, ValidationError):
+            return None
+        return frame
 
     def _download_batch(
         self,
