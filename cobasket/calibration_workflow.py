@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+import numpy as np
 import pandas as pd
 
+from cobasket.config_paths import resolve_portfolio_config_paths
 from cobasket.data import DataManager
 from cobasket.evidence import (
     BasketWatchlist,
@@ -35,26 +37,6 @@ class WatchlistCalibrationResult:
     calibration: ProbabilityCalibration
     records: pd.DataFrame
     basket_summary: pd.DataFrame
-
-
-def resolve_config_path(config_path: str | Path, value: str | Path) -> Path:
-    """Resolve a path relative to a portfolio configuration file.
-
-    Parameters
-    ----------
-    config_path
-        Portfolio configuration JSON path.
-    value
-        Absolute or configuration-relative path.
-
-    Returns
-    -------
-    pathlib.Path
-        Absolute resolved path.
-    """
-    base = Path(config_path).expanduser().resolve().parent
-    path = Path(value).expanduser()
-    return path.resolve() if path.is_absolute() else (base / path).resolve()
 
 
 def calibrate_watchlist(
@@ -109,9 +91,8 @@ def calibrate_watchlist(
         If the watchlist yields no usable walk-forward outcomes.
     """
     config_path = Path(config_path).expanduser().resolve()
-    config = PortfolioConfig.load(config_path)
-    watchlist_path = resolve_config_path(config_path, config.watchlist_path)
-    watchlist = BasketWatchlist.load(watchlist_path)
+    config = resolve_portfolio_config_paths(PortfolioConfig.load(config_path), config_path)
+    watchlist = BasketWatchlist.load(config.watchlist_path)
     manager = data_manager or DataManager()
     z_window = config.z_window if z_window is None else int(z_window)
     min_trace_ratio = config.min_trace_ratio if min_trace_ratio is None else float(min_trace_ratio)
@@ -136,7 +117,7 @@ def calibrate_watchlist(
                 step=step,
                 min_trace_ratio=min_trace_ratio,
             )
-        except ValueError as exc:
+        except (ValueError, np.linalg.LinAlgError) as exc:
             summaries.append(
                 {"basket": ", ".join(basket), "records": 0, "evaluations": 0, "status": str(exc)}
             )
@@ -162,11 +143,7 @@ def calibrate_watchlist(
         raise ValueError("watchlist produced no usable walk-forward calibration outcomes")
 
     pooled = pd.concat(record_tables, ignore_index=True)
-    calibration = fit_probability_calibration(
-        pooled,
-        score_edges=score_edges,
-        horizon=horizon,
-    )
+    calibration = fit_probability_calibration(pooled, score_edges=score_edges, horizon=horizon)
     return WatchlistCalibrationResult(
         calibration=calibration,
         records=pooled,
