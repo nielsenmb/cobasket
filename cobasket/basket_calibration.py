@@ -12,6 +12,7 @@ import pandas as pd
 from cobasket.basket_validation import BasketValidationSet
 from cobasket.calibration_workflow import calibrate_watchlist
 from cobasket.evidence import ProbabilityCalibration, fit_probability_calibration
+from cobasket.thresholds import MIN_ACCEPTED_EVALUATIONS
 
 
 @dataclass(frozen=True)
@@ -170,7 +171,7 @@ def fit_basket_calibrations(
     portfolio_path: str | Path,
     validation_path: str | Path,
     *,
-    min_evaluations: int = 20,
+    min_evaluations: int = MIN_ACCEPTED_EVALUATIONS,
     train_window: int = 252,
     z_window: int | None = None,
     horizon: int = 20,

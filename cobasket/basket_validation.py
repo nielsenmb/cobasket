@@ -15,6 +15,7 @@ from scipy.stats import spearmanr
 from cobasket.config_paths import resolve_portfolio_config_paths
 from cobasket.data import DataManager
 from cobasket.evidence import BasketWatchlist, cointegration_evidence, walk_forward_evidence
+from cobasket.thresholds import MIN_ACCEPTED_EVALUATIONS
 from cobasket.workflow import PortfolioConfig
 
 
@@ -42,7 +43,7 @@ class BasketValidationThresholds:
     """
 
     min_current_trace_ratio: float = 1.0
-    min_evaluations: int = 20
+    min_evaluations: int = MIN_ACCEPTED_EVALUATIONS
     min_acceptance_rate: float = 0.15
     min_weight_stability: float = 0.60
     min_score_return_correlation: float = 0.05
@@ -281,11 +282,7 @@ def validate_watchlist_baskets(
         negative = records.loc[records["score"] <= -0.25, "outperformed"] if not records.empty else pd.Series(dtype=float)
         positive_rate = float(positive.mean()) if not positive.empty else None
         negative_rate = float(negative.mean()) if not negative.empty else None
-        contrast = (
-            positive_rate - negative_rate
-            if positive_rate is not None and negative_rate is not None
-            else None
-        )
+        contrast = positive_rate - negative_rate if positive_rate is not None and negative_rate is not None else None
         status, reasons = _classify_profile(
             current_trace_ratio=current_trace_ratio,
             accepted_evaluations=accepted,
