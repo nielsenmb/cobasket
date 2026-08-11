@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import deque
-import json
 from pathlib import Path
 import sys
 
@@ -67,6 +66,7 @@ def workflow_command(stage: str, *, universe: str, period: str) -> tuple[str, ..
             "discovery_results.csv",
             "--portfolio",
             "portfolio.json",
+            "--update-portfolio",
         ),
         "validate": (
             "-m",
@@ -238,6 +238,17 @@ class WorkflowDialog(QDialog):
             return
 
         stage = self._queue.popleft()
+        if stage != "discover" and not (self.workspace() / "portfolio.json").exists():
+            self._queue.clear()
+            self._active_stage = None
+            self._set_running(False)
+            self._refresh_status()
+            QMessageBox.warning(
+                self,
+                "No discovered portfolio",
+                "The previous stage did not produce portfolio.json, usually because no promising basket passed discovery.",
+            )
+            return
         self._active_stage = stage
         self.output.append(f"\n=== {_STAGE_LABELS[stage]} ===")
         command = workflow_command(
@@ -343,7 +354,7 @@ class WorkflowDialog(QDialog):
     def closeEvent(self, event) -> None:
         """Prevent accidental closure while a workflow process is running."""
         if self._process is not None:
-            QMessageBox.information(self, "Workflow running", "Stop or finish the current workflow before closing.")
+            QMessageBox.information(self, "Workflow running", "Finish the current workflow before closing.")
             event.ignore()
             return
         super().closeEvent(event)
