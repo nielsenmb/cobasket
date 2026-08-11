@@ -8,14 +8,17 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+import numpy as np
 import pandas as pd
 
 from cobasket.data import DataManager
 from cobasket.evidence import (
     BasketWatchlist,
+    CalibratedAssetEvidence,
     ProbabilityCalibration,
     ProbabilityRecommendationPolicy,
     RecommendationPolicy,
+    cointegration_evidence,
     evaluate_watchlist,
 )
 
@@ -33,11 +36,16 @@ class PortfolioConfig:
     watchlist_path
         JSON file containing a monitored basket watchlist.
     calibration_path
-        Optional global probability-calibration JSON.
+        Optional global probability-calibration JSON. This remains supported for
+        backward compatibility and diagnostics.
     validation_path
         Optional basket-validation-profile JSON. When supplied, live actions are
         gated so baskets that are not historically validated cannot generate a
         positive or reducing recommendation by themselves.
+    basket_calibration_path
+        Optional basket-specific probability-calibration JSON. When supplied,
+        live probabilities are derived only from eligible basket-specific models;
+        Cobasket does not fall back to the pooled calibration for missing baskets.
     period
         Historical period requested from the data provider.
     z_window
@@ -53,6 +61,7 @@ class PortfolioConfig:
     watchlist_path: str = "portfolio_watchlist.json"
     calibration_path: str | None = None
     validation_path: str | None = None
+    basket_calibration_path: str | None = None
     period: str = "3y"
     z_window: int = 60
     min_trace_ratio: float = 1.0
@@ -79,7 +88,18 @@ class PortfolioConfig:
         object.__setattr__(self, "holdings", holdings)
 
     def save(self, path: str | Path) -> Path:
-        """Write the configuration to human-readable JSON."""
+        """Write the configuration to human-readable JSON.
+
+        Parameters
+        ----------
+        path
+            Output JSON path.
+
+        Returns
+        -------
+        pathlib.Path
+            Written path.
+        """
         output = Path(path)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(asdict(self), indent=2) + "\n", encoding="utf-8")
@@ -87,7 +107,18 @@ class PortfolioConfig:
 
     @classmethod
     def load(cls, path: str | Path) -> "PortfolioConfig":
-        """Load a portfolio configuration from JSON."""
+        """Load a portfolio configuration from JSON.
+
+        Parameters
+        ----------
+        path
+            Existing JSON configuration.
+
+        Returns
+        -------
+        PortfolioConfig
+            Loaded configuration.
+        """
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         return cls(**payload)
 
@@ -110,6 +141,7 @@ class TickerReport:
     explanation: str
     basket_memberships: tuple[tuple[str, ...], ...]
     basket_validation: tuple[dict[str, str], ...] = ()
+    probability_sources: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
 
 
@@ -132,7 +164,18 @@ class PortfolioReport:
         return asdict(self)
 
     def save(self, path: str | Path) -> Path:
-        """Write the report to JSON."""
+        """Write the report to JSON.
+
+        Parameters
+        ----------
+        path
+            Destination JSON path.
+
+        Returns
+        -------
+        pathlib.Path
+            Written path.
+        """
         output = Path(path)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")
@@ -147,6 +190,7 @@ class PortfolioReport:
             row["basket_validation"] = [
                 f"{entry['basket']}: {entry['status']}" for entry in item.basket_validation
             ]
+            row["probability_sources"] = list(item.probability_sources)
             row["warnings"] = list(item.warnings)
             rows.append(row)
         table = pd.DataFrame(rows)
@@ -158,6 +202,98 @@ class PortfolioReport:
             else "evidence_score"
         )
         return table.sort_values(sort_column, ascending=False, na_position="last", ignore_index=True)
+
+
+def _combine_basket_calibrations(
+    *,
+    ticker: str,
+    evidence: Any,
+    memberships: tuple[tuple[str, ...], ...],
+    prices: pd.DataFrame,
+    calibration_by_key: Mapping[str, Any],
+    window: int,
+    min_trace_ratio: float,
+) -> tuple[CalibratedAssetEvidence, tuple[str, ...]] | None:
+    """Combine basket-specific probabilities for one ticker.
+
+    Each eligible basket is evaluated independently at the current date and its
+    own historical probability mapping is applied to that basket's ticker-level
+    evidence. If a ticker belongs to multiple calibrated baskets, posterior
+    summaries are averaged with weights equal to the number of independent
+    historical evaluation dates supporting each basket calibration.
+
+    Parameters
+    ----------
+    ticker
+        Asset symbol being evaluated.
+    evidence
+        Watchlist-level evidence used as the container for the combined result.
+    memberships
+        Watchlist baskets containing ``ticker``.
+    prices
+        Current aligned prices.
+    calibration_by_key
+        Basket-specific calibrations keyed by comma-separated basket membership.
+    window
+        Current spread z-score window.
+    min_trace_ratio
+        Current Johansen acceptance threshold.
+
+    Returns
+    -------
+    tuple or None
+        Combined calibrated evidence and contributing basket keys, or ``None``
+        when no eligible current basket can produce a calibrated probability.
+    """
+    values: list[tuple[float, float, float, int, int, int, str]] = []
+    for basket in memberships:
+        key = ", ".join(basket)
+        stored = calibration_by_key.get(key)
+        if stored is None:
+            continue
+        try:
+            result = cointegration_evidence(
+                prices.loc[:, list(basket)],
+                window=window,
+                min_trace_ratio=min_trace_ratio,
+            )
+        except (ValueError, np.linalg.LinAlgError):
+            continue
+        item = next((candidate for candidate in result.asset_evidence if candidate.ticker == ticker), None)
+        if item is None:
+            continue
+        calibrated = stored.calibration.calibrate(item)
+        weight = max(int(stored.accepted_evaluations), 1)
+        values.append(
+            (
+                calibrated.probability_outperform,
+                calibrated.probability_lower,
+                calibrated.probability_upper,
+                calibrated.sample_count,
+                calibrated.horizon,
+                weight,
+                key,
+            )
+        )
+
+    if not values:
+        return None
+    weights = np.asarray([value[5] for value in values], dtype=float)
+    probability = float(np.average([value[0] for value in values], weights=weights))
+    lower = float(np.average([value[1] for value in values], weights=weights))
+    upper = float(np.average([value[2] for value in values], weights=weights))
+    sample_count = int(sum(value[3] for value in values))
+    horizon = int(round(np.average([value[4] for value in values], weights=weights)))
+    combined = CalibratedAssetEvidence(
+        evidence=evidence,
+        probability_outperform=probability,
+        probability_lower=lower,
+        probability_upper=upper,
+        sample_count=sample_count,
+        horizon=horizon,
+        benchmark="equal-weight basket",
+    )
+    return combined, tuple(value[6] for value in values)
 
 
 class PortfolioAnalyzer:
@@ -186,7 +322,7 @@ class PortfolioAnalyzer:
     ) -> PortfolioReport:
         """Generate a current portfolio and watchlist report."""
         watchlist = BasketWatchlist.load(config.watchlist_path)
-        calibration = (
+        global_calibration = (
             ProbabilityCalibration.load(config.calibration_path)
             if config.calibration_path is not None
             else None
@@ -198,6 +334,14 @@ class PortfolioAnalyzer:
 
             validation = BasketValidationSet.load(config.validation_path)
             validation_by_key = validation.by_key()
+
+        basket_calibration = None
+        basket_calibration_by_key: dict[str, Any] = {}
+        if config.basket_calibration_path is not None:
+            from cobasket.basket_calibration import BasketCalibrationSet
+
+            basket_calibration = BasketCalibrationSet.load(config.basket_calibration_path)
+            basket_calibration_by_key = basket_calibration.by_key()
 
         prices = self.data_manager.prices(
             watchlist.tickers,
@@ -212,15 +356,15 @@ class PortfolioAnalyzer:
             window=config.z_window,
             min_trace_ratio=config.min_trace_ratio,
             policy=self.raw_policy,
-            calibration=calibration,
+            calibration=(global_calibration if basket_calibration is None else None),
         )
 
         raw_by_ticker = {item.ticker: item for item in evaluation.recommendations}
-        calibrated_by_ticker = {
+        globally_calibrated_by_ticker = {
             item.ticker: item for item in (evaluation.calibrated_recommendations or ())
         }
         evidence_by_ticker = {item.ticker: item for item in evaluation.evidence}
-        calibrated_evidence = {
+        globally_calibrated_evidence = {
             item.ticker: item for item in (evaluation.calibrated_evidence or ())
         }
 
@@ -238,9 +382,13 @@ class PortfolioAnalyzer:
             global_warnings.append(
                 f"{len(evaluation.failed_baskets)} watchlist basket(s) failed current evaluation."
             )
-        if calibration is None:
+        if basket_calibration is None and global_calibration is None:
             global_warnings.append(
                 "No probability calibration was supplied; recommendations use raw evidence thresholds."
+            )
+        elif basket_calibration is not None:
+            global_warnings.append(
+                "Basket-specific calibration is active; pooled calibration is not used for missing baskets."
             )
         if validation is None:
             global_warnings.append(
@@ -278,36 +426,81 @@ class PortfolioAnalyzer:
                         f"(statuses: {', '.join(statuses)})."
                     )
 
-            calibrated = calibrated_evidence.get(ticker)
-            calibrated_recommendation = calibrated_by_ticker.get(ticker)
-            if calibrated is not None and calibrated_recommendation is not None:
-                probability = float(calibrated.probability_outperform)
-                lower = float(calibrated.probability_lower)
-                upper = float(calibrated.probability_upper)
-                sample_count = int(calibrated.sample_count)
-                recommendation = calibrated_recommendation.action
-                explanation = calibrated_recommendation.explanation
-                if sample_count < self.probability_policy.min_samples:
-                    warnings.append(
-                        f"Calibration bin has only {sample_count} historical examples."
+            probability_sources: tuple[str, ...] = ()
+            if basket_calibration is not None:
+                combined = _combine_basket_calibrations(
+                    ticker=ticker,
+                    evidence=evidence,
+                    memberships=memberships,
+                    prices=prices,
+                    calibration_by_key=basket_calibration_by_key,
+                    window=config.z_window,
+                    min_trace_ratio=config.min_trace_ratio,
+                )
+                if combined is not None:
+                    calibrated, probability_sources = combined
+                    classified = self.probability_policy.classify(
+                        calibrated,
+                        currently_held=held_quantity > 0.0,
                     )
-                if upper - lower > self.wide_interval_threshold:
-                    warnings.append("Calibrated probability interval is wide.")
+                    probability = float(calibrated.probability_outperform)
+                    lower = float(calibrated.probability_lower)
+                    upper = float(calibrated.probability_upper)
+                    sample_count = int(calibrated.sample_count)
+                    recommendation = classified.action
+                    explanation = (
+                        f"Basket-specific calibration from {len(probability_sources)} validated "
+                        f"basket(s). {classified.explanation}"
+                    )
+                    if sample_count < self.probability_policy.min_samples:
+                        warnings.append(
+                            f"Basket-specific calibration has only {sample_count} score-bin examples."
+                        )
+                    if upper - lower > self.wide_interval_threshold:
+                        warnings.append("Basket-specific probability interval is wide.")
+                else:
+                    probability = lower = upper = None
+                    sample_count = None
+                    raw = raw_by_ticker[ticker]
+                    recommendation = raw.action
+                    explanation = raw.explanation
+                    warnings.append("Ticker has no eligible basket-specific probability calibration.")
             else:
-                probability = lower = upper = None
-                sample_count = None
-                raw = raw_by_ticker[ticker]
-                recommendation = raw.action
-                explanation = raw.explanation
-                warnings.append("Ticker has no calibrated probability.")
+                calibrated = globally_calibrated_evidence.get(ticker)
+                calibrated_recommendation = globally_calibrated_by_ticker.get(ticker)
+                if calibrated is not None and calibrated_recommendation is not None:
+                    probability = float(calibrated.probability_outperform)
+                    lower = float(calibrated.probability_lower)
+                    upper = float(calibrated.probability_upper)
+                    sample_count = int(calibrated.sample_count)
+                    recommendation = calibrated_recommendation.action
+                    explanation = calibrated_recommendation.explanation
+                    probability_sources = ("pooled calibration",)
+                    if sample_count < self.probability_policy.min_samples:
+                        warnings.append(
+                            f"Calibration bin has only {sample_count} historical examples."
+                        )
+                    if upper - lower > self.wide_interval_threshold:
+                        warnings.append("Calibrated probability interval is wide.")
+                else:
+                    probability = lower = upper = None
+                    sample_count = None
+                    raw = raw_by_ticker[ticker]
+                    recommendation = raw.action
+                    explanation = raw.explanation
+                    warnings.append("Ticker has no calibrated probability.")
 
-            if validation is not None and validated_memberships == 0:
+            reliability_gate = validation is not None and validated_memberships == 0
+            calibration_gate = basket_calibration is not None and not probability_sources
+            if reliability_gate or calibration_gate:
                 gated_action = "Hold" if held_quantity > 0.0 else "Wait"
+                if reliability_gate:
+                    reason = "none of this ticker's supporting baskets currently has validated historical reliability"
+                else:
+                    reason = "no validated supporting basket has enough independent history for basket-specific calibration"
                 explanation = (
                     f"{gated_action}: current statistical evidence is not used for an actionable "
-                    "recommendation because none of this ticker's supporting baskets currently has "
-                    "validated historical reliability. "
-                    + explanation
+                    f"recommendation because {reason}. " + explanation
                 )
                 recommendation = gated_action
 
@@ -327,6 +520,7 @@ class PortfolioAnalyzer:
                     explanation=explanation,
                     basket_memberships=memberships,
                     basket_validation=tuple(validation_entries),
+                    probability_sources=probability_sources,
                     warnings=tuple(warnings),
                 )
             )
@@ -348,6 +542,10 @@ class PortfolioAnalyzer:
             diagnostics["validation_status"] = diagnostics["basket_key"].map(
                 lambda key: validation_by_key[key].status if key in validation_by_key else "missing"
             )
+            if basket_calibration is not None:
+                diagnostics["basket_calibrated"] = diagnostics["basket_key"].isin(
+                    basket_calibration_by_key
+                )
             diagnostics = diagnostics.drop(columns=["basket_key"])
         metadata: dict[str, Any] = {
             "watchlist_name": watchlist.name,
@@ -355,11 +553,21 @@ class PortfolioAnalyzer:
             "z_window": config.z_window,
             "min_trace_ratio": config.min_trace_ratio,
             "price_age_days": price_age_days,
-            "calibrated": calibration is not None,
+            "calibrated": basket_calibration is not None or global_calibration is not None,
+            "calibration_mode": (
+                "basket_specific"
+                if basket_calibration is not None
+                else "pooled"
+                if global_calibration is not None
+                else "none"
+            ),
             "validation_gated": validation is not None,
         }
         if validation is not None:
             metadata["validation_generated_at_utc"] = validation.generated_at_utc
+        if basket_calibration is not None:
+            metadata["basket_calibration_generated_at_utc"] = basket_calibration.generated_at_utc
+            metadata["basket_calibration_count"] = len(basket_calibration.calibrations)
         if getattr(self.data_manager, "last_metadata", None) is not None:
             metadata["data"] = asdict(self.data_manager.last_metadata)
 
