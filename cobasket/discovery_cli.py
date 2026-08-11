@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import warnings
 
 from cobasket.data.universe import get_universe
 from cobasket.discovery import discover_baskets
 from cobasket.evidence import BasketWatchlist
+from cobasket.workflow import PortfolioConfig
 
 
 def _save_watchlist(table, path: Path, top_n: int, universe, *, include_borderline: bool = False) -> int:
@@ -59,6 +62,85 @@ def _save_watchlist(table, path: Path, top_n: int, universe, *, include_borderli
     return len(baskets)
 
 
+def _portfolio_relative_path(portfolio_path: Path, target_path: Path) -> str:
+    """Return ``target_path`` relative to the portfolio configuration directory.
+
+    Parameters
+    ----------
+    portfolio_path
+        Destination portfolio configuration path.
+    target_path
+        File path to store inside the configuration.
+
+    Returns
+    -------
+    str
+        Relative path from the portfolio directory to the target.
+    """
+    return os.path.relpath(target_path.resolve(), start=portfolio_path.resolve().parent)
+
+
+def _ensure_portfolio_config(
+    portfolio_path: Path,
+    watchlist_path: Path,
+    *,
+    period: str,
+    min_trace_ratio: float,
+    update_existing: bool,
+) -> str:
+    """Create or optionally update the portfolio configuration after discovery.
+
+    A missing configuration is bootstrapped with no holdings and zero cash so a
+    clean-directory discovery run can proceed directly to validation. Existing
+    portfolio files are preserved unless ``update_existing`` is explicitly set.
+
+    Parameters
+    ----------
+    portfolio_path
+        Portfolio JSON path.
+    watchlist_path
+        Newly generated discovery watchlist path.
+    period
+        Historical period used for discovery and subsequent validation.
+    min_trace_ratio
+        Johansen trace-ratio threshold used for discovery.
+    update_existing
+        Update an existing portfolio to point at the new watchlist when ``True``.
+
+    Returns
+    -------
+    str
+        One of ``"created"``, ``"updated"``, or ``"unchanged"``.
+    """
+    portfolio_path = portfolio_path.expanduser().resolve()
+    watchlist_path = watchlist_path.expanduser().resolve()
+    stored_watchlist = _portfolio_relative_path(portfolio_path, watchlist_path)
+
+    if portfolio_path.exists():
+        if not update_existing:
+            return "unchanged"
+        config = PortfolioConfig.load(portfolio_path)
+        config = replace(
+            config,
+            watchlist_path=stored_watchlist,
+            period=str(period),
+            min_trace_ratio=float(min_trace_ratio),
+            validation_path=None,
+            basket_calibration_path=None,
+        )
+        config.save(portfolio_path)
+        return "updated"
+
+    PortfolioConfig(
+        holdings={},
+        cash=0.0,
+        watchlist_path=stored_watchlist,
+        period=str(period),
+        min_trace_ratio=float(min_trace_ratio),
+    ).save(portfolio_path)
+    return "created"
+
+
 def main() -> None:
     """Run persistence-aware discovery for a built-in or custom universe."""
     parser = argparse.ArgumentParser(
@@ -89,6 +171,12 @@ def main() -> None:
     parser.add_argument("--top-n", type=int, default=20)
     parser.add_argument("--watchlist-out", default="discovered_watchlist.json")
     parser.add_argument("--table-out", default="discovery_results.csv")
+    parser.add_argument("--portfolio", default="portfolio.json", help="Portfolio config to create in a clean directory")
+    parser.add_argument(
+        "--update-portfolio",
+        action="store_true",
+        help="Update an existing portfolio to use the newly discovered watchlist",
+    )
     parser.add_argument("--force-refresh", action="store_true")
     args = parser.parse_args()
 
@@ -150,6 +238,23 @@ def main() -> None:
     if count:
         label = "promising/borderline" if args.include_borderline else "promising"
         print(f"Saved {count} {label} basket(s) to {watchlist_path}")
+        portfolio_path = Path(args.portfolio).expanduser().resolve()
+        action = _ensure_portfolio_config(
+            portfolio_path,
+            watchlist_path,
+            period=args.period,
+            min_trace_ratio=args.min_trace_stat_ratio,
+            update_existing=args.update_portfolio,
+        )
+        if action == "created":
+            print(f"Created starter portfolio configuration at {portfolio_path}")
+        elif action == "updated":
+            print(f"Updated portfolio configuration at {portfolio_path}")
+        else:
+            print(
+                f"Existing portfolio left unchanged at {portfolio_path}; "
+                "use --update-portfolio to link the new watchlist."
+            )
     else:
         print("No promising basket passed the discovery thresholds; watchlist was not created.")
 
