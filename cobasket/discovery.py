@@ -11,6 +11,7 @@ import pandas as pd
 from cobasket.backtest import rank_confirmed_baskets
 from cobasket.cointegration import screen_universe
 from cobasket.evidence.calibration import walk_forward_evidence
+from cobasket.thresholds import MIN_ACCEPTED_EVALUATIONS
 
 
 @dataclass(frozen=True)
@@ -165,7 +166,7 @@ def discover_baskets(
     min_persistence: float = 0.15,
     min_weight_stability: float = 0.60,
     promising_persistence: float = 0.30,
-    promising_evaluations: int = 15,
+    promising_evaluations: int = MIN_ACCEPTED_EVALUATIONS,
     promising_weight_stability: float = 0.80,
 ) -> DiscoveryResult:
     """Run thorough persistence-aware basket discovery.
