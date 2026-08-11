@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Sequence
+import warnings
 
 import pandas as pd
 
@@ -72,11 +73,32 @@ def fetch_universe(
     Returns
     -------
     pandas.DataFrame
-        Adjusted prices after removing tickers below 90 percent coverage and
-        retaining common dates.
+        Adjusted prices after removing unavailable or low-coverage constituents,
+        retaining the market proxy, and aligning common dates.
+
+    Raises
+    ------
+    DownloadError
+        If the requested market proxy is unavailable.
     """
     all_tickers = [*tickers, market_ticker]
-    return DataManager(cache_dir=cache_dir).prices(all_tickers, period=period, min_coverage=0.9)
+    manager = DataManager(cache_dir=cache_dir)
+    prices = manager.prices(all_tickers, period=period, min_coverage=0.9)
+    metadata = manager.last_metadata
+    if market_ticker not in prices.columns:
+        raise DownloadError(f"market proxy {market_ticker!r} could not be downloaded")
+    if metadata is not None:
+        failed = [ticker for ticker in metadata.failed_tickers if ticker != market_ticker]
+        if failed:
+            preview = ", ".join(failed[:10])
+            suffix = "" if len(failed) <= 10 else f", ... (+{len(failed) - 10} more)"
+            warnings.warn(
+                f"Skipped {len(failed)} unavailable or insufficient-coverage universe "
+                f"constituent(s): {preview}{suffix}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+    return prices
 
 
 __all__ = [
