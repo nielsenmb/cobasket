@@ -17,8 +17,21 @@ def test_discovery_command_relinks_existing_portfolio() -> None:
     command = workflow_command("discover", universe="sp500", period="5y")
     assert command[:2] == ("-m", "cobasket.discovery_cli")
     assert "--update-portfolio" in command
+    assert "--trading212-only" not in command
     assert command[command.index("--universe") + 1] == "sp500"
     assert command[command.index("--period") + 1] == "5y"
+
+
+def test_discovery_command_can_filter_for_trading212() -> None:
+    """The guided discovery command should expose the optional broker filter."""
+    command = workflow_command(
+        "discover",
+        universe="ftse350",
+        period="5y",
+        trading212_only=True,
+    )
+    assert command[command.index("--universe") + 1] == "ftse350"
+    assert "--trading212-only" in command
 
 
 def test_guided_workflow_uses_expected_output_files() -> None:
