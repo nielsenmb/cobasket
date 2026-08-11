@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from PyQt6.QtWidgets import (
@@ -28,15 +29,28 @@ from PyQt6.QtWidgets import (
 from cobasket.history import RecommendationHistoryStore
 
 
+def _format_optional_number(value, formatter) -> str:
+    """Format a nullable numeric database value safely.
+
+    Parameters
+    ----------
+    value
+        Database value that may be ``None`` or ``NaN``.
+    formatter
+        Callable accepting a finite floating-point value.
+
+    Returns
+    -------
+    str
+        Formatted value or an em dash when missing.
+    """
+    return "—" if pd.isna(value) else formatter(float(value))
+
+
 class RecommendationHistoryDialog(QDialog):
     """Display model recommendations, transitions, actions, and outcomes."""
 
-    def __init__(
-        self,
-        database_path: str | Path,
-        ticker: str | None = None,
-        parent=None,
-    ) -> None:
+    def __init__(self, database_path: str | Path, ticker: str | None = None, parent=None) -> None:
         super().__init__(parent)
         self.store = RecommendationHistoryStore(database_path)
         self.setWindowTitle("Recommendation history")
@@ -93,9 +107,7 @@ class RecommendationHistoryDialog(QDialog):
         record = QPushButton("Record action")
         action_layout.addWidget(record)
         self.action_table = QTableWidget(0, 6)
-        self.action_table.setHorizontalHeaderLabels(
-            ["Time", "Action", "Quantity", "Price", "Note", "ID"]
-        )
+        self.action_table.setHorizontalHeaderLabels(["Time", "Action", "Quantity", "Price", "Note", "ID"])
         action_layout.addWidget(self.action_table)
         tabs.addTab(action_widget, "My decisions")
 
@@ -141,6 +153,7 @@ class RecommendationHistoryDialog(QDialog):
             self.history_table.setRowCount(0)
             self.action_table.setRowCount(0)
             self.outcome_table.setRowCount(0)
+            self.summary.setText("No stored recommendation history.")
             return
 
         history = self.store.ticker_history(ticker)
@@ -150,11 +163,10 @@ class RecommendationHistoryDialog(QDialog):
         for row_index, (_, row) in enumerate(history.iterrows()):
             timestamp = row["generated_at_utc"]
             transition = transition_by_time.get(timestamp.isoformat(), "")
-            probability = row["probability_outperform"]
             values = (
                 timestamp.strftime("%Y-%m-%d %H:%M"),
                 str(row["recommendation"]),
-                "—" if probability != probability else f"{100 * float(probability):.1f}%",
+                _format_optional_number(row["probability_outperform"], lambda x: f"{100 * x:.1f}%"),
                 f"{float(row['evidence_score']):.3f}",
                 f"{float(row['held_quantity']):g}",
                 f"${float(row['current_price']):,.2f}",
@@ -168,23 +180,29 @@ class RecommendationHistoryDialog(QDialog):
         axis = self.figure.add_subplot(111)
         if not history.empty:
             x = history["generated_at_utc"]
-            probability = history["probability_outperform"].astype(float)
-            axis.plot(x, probability, marker="o", label="Outperformance probability")
-            if history["probability_lower"].notna().any():
-                axis.fill_between(
-                    x,
-                    history["probability_lower"].astype(float),
-                    history["probability_upper"].astype(float),
-                    alpha=0.2,
-                    label="Credible interval",
-                )
+            probability = pd.to_numeric(history["probability_outperform"], errors="coerce")
+            evidence = pd.to_numeric(history["evidence_score"], errors="coerce")
+            if probability.notna().any():
+                axis.plot(x, probability, marker="o", label="Outperformance probability")
+                lower = pd.to_numeric(history["probability_lower"], errors="coerce")
+                upper = pd.to_numeric(history["probability_upper"], errors="coerce")
+                valid_interval = lower.notna() & upper.notna()
+                if valid_interval.any():
+                    axis.fill_between(
+                        x[valid_interval], lower[valid_interval], upper[valid_interval], alpha=0.2,
+                        label="Credible interval",
+                    )
+                axis.axhline(0.5, linewidth=1, linestyle=":")
+                axis.set_ylabel("Probability")
+                axis.set_ylim(0.0, 1.0)
+            else:
+                axis.text(0.5, 0.92, "No calibrated probabilities stored", ha="center", transform=axis.transAxes)
+                axis.set_yticks([])
+
             evidence_axis = axis.twinx()
-            evidence_axis.plot(x, history["evidence_score"], linestyle="--", label="Evidence score")
+            evidence_axis.plot(x, evidence, linestyle="--", marker="o", label="Evidence score")
             evidence_axis.set_ylabel("Evidence score")
             evidence_axis.set_ylim(-1.05, 1.05)
-            axis.axhline(0.5, linewidth=1, linestyle=":")
-            axis.set_ylabel("Probability")
-            axis.set_ylim(0.0, 1.0)
             axis.set_title(f"{ticker} recommendation history")
             axis.grid(True, alpha=0.3)
         self.canvas.draw_idle()
@@ -195,9 +213,9 @@ class RecommendationHistoryDialog(QDialog):
             values = (
                 row["action_at_utc"].strftime("%Y-%m-%d %H:%M"),
                 str(row["action"]),
-                "" if row["quantity"] != row["quantity"] else f"{float(row['quantity']):g}",
-                "" if row["price"] != row["price"] else f"${float(row['price']):,.2f}",
-                str(row["note"]),
+                "" if pd.isna(row["quantity"]) else f"{float(row['quantity']):g}",
+                "" if pd.isna(row["price"]) else f"${float(row['price']):,.2f}",
+                "" if pd.isna(row["note"]) else str(row["note"]),
                 str(int(row["action_id"])),
             )
             for column, value in enumerate(values):
@@ -222,10 +240,9 @@ class RecommendationHistoryDialog(QDialog):
         if current is None:
             self.summary.setText(f"No stored reports for {ticker}.")
         else:
-            duration = len(history)
             self.summary.setText(
                 f"{ticker}: {current['recommendation']} in the latest snapshot. "
-                f"{duration} report snapshot(s), {len(transitions)} recommendation change(s), "
+                f"{len(history)} report snapshot(s), {len(transitions)} recommendation change(s), "
                 f"and {len(actions)} recorded user action(s)."
             )
 
