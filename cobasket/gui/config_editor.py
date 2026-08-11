@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -94,7 +93,7 @@ class ConfigEditorDialog(QDialog):
         super().__init__(parent)
         self.config_path = Path(config_path)
         self.setWindowTitle("Edit Cobasket portfolio")
-        self.resize(760, 620)
+        self.resize(760, 660)
         self._build_ui()
         self.load_files()
 
@@ -140,13 +139,17 @@ class ConfigEditorDialog(QDialog):
         self.stale_spin.setRange(0.0, 3650.0)
         self.stale_spin.setDecimals(1)
         self.calibration_edit = QLineEdit()
+        self.validation_edit = QLineEdit()
+        self.basket_calibration_edit = QLineEdit()
 
         form.addRow("Cash", self.cash_spin)
         form.addRow("Price history period", self.period_edit)
         form.addRow("Z-score window", self.z_window_spin)
         form.addRow("Minimum trace ratio", self.trace_spin)
         form.addRow("Stale-price limit (days)", self.stale_spin)
-        form.addRow("Calibration JSON", self.calibration_edit)
+        form.addRow("Pooled calibration JSON", self.calibration_edit)
+        form.addRow("Basket validation JSON", self.validation_edit)
+        form.addRow("Basket-specific calibration JSON", self.basket_calibration_edit)
         layout.addLayout(form)
 
         layout.addWidget(QLabel("Holdings (quantity zero keeps a ticker eligible for re-entry)"))
@@ -251,6 +254,8 @@ class ConfigEditorDialog(QDialog):
         self.trace_spin.setValue(config.min_trace_ratio)
         self.stale_spin.setValue(config.max_price_age_days)
         self.calibration_edit.setText(config.calibration_path or "")
+        self.validation_edit.setText(config.validation_path or "")
+        self.basket_calibration_edit.setText(config.basket_calibration_path or "")
         self.watchlist_path_edit.setText(str(watchlist_path))
         self.watchlist_name_edit.setText(watchlist.name)
 
@@ -287,9 +292,10 @@ class ConfigEditorDialog(QDialog):
         try:
             holdings = self._collect_holdings()
             baskets = self._collect_baskets()
-            watchlist_path = Path(self.watchlist_path_edit.text().strip())
-            if not watchlist_path:
+            watchlist_text = self.watchlist_path_edit.text().strip()
+            if not watchlist_text:
                 raise ValueError("watchlist path must not be empty")
+            watchlist_path = Path(watchlist_text)
             watchlist = BasketWatchlist(
                 baskets=baskets,
                 name=self.watchlist_name_edit.text().strip() or "Cobasket watchlist",
@@ -299,6 +305,8 @@ class ConfigEditorDialog(QDialog):
                 cash=self.cash_spin.value(),
                 watchlist_path=str(watchlist_path),
                 calibration_path=self.calibration_edit.text().strip() or None,
+                validation_path=self.validation_edit.text().strip() or None,
+                basket_calibration_path=self.basket_calibration_edit.text().strip() or None,
                 period=self.period_edit.text().strip(),
                 z_window=self.z_window_spin.value(),
                 min_trace_ratio=self.trace_spin.value(),

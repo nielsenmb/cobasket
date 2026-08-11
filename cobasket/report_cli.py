@@ -44,8 +44,9 @@ def main() -> None:
     )
     parser.add_argument("--portfolio", required=True, help="Portfolio configuration JSON")
     parser.add_argument("--watchlist", help="Override the watchlist path in the configuration")
-    parser.add_argument("--calibration", help="Override the calibration path in the configuration")
-    parser.add_argument("--validation", help="Override the basket-validation path in the configuration")
+    parser.add_argument("--calibration", help="Override the pooled calibration path")
+    parser.add_argument("--validation", help="Override the basket-validation path")
+    parser.add_argument("--basket-calibration", help="Override the basket-specific calibration path")
     parser.add_argument("--period", help="Override the historical download period")
     parser.add_argument("--output", default="cobasket_report.json", help="Output report JSON")
     parser.add_argument("--force-refresh", action="store_true", help="Bypass valid price caches")
@@ -58,6 +59,7 @@ def main() -> None:
         "watchlist_path": args.watchlist or config.watchlist_path,
         "calibration_path": args.calibration or config.calibration_path,
         "validation_path": args.validation or config.validation_path,
+        "basket_calibration_path": args.basket_calibration or config.basket_calibration_path,
         "period": args.period or config.period,
     }
     resolved = PortfolioConfig(**payload)

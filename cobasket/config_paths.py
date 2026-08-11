@@ -37,4 +37,7 @@ def resolve_portfolio_config_paths(
         watchlist_path=resolve(config.watchlist_path),
         calibration_path=resolve(config.calibration_path) if config.calibration_path else None,
         validation_path=resolve(config.validation_path) if config.validation_path else None,
+        basket_calibration_path=(
+            resolve(config.basket_calibration_path) if config.basket_calibration_path else None
+        ),
     )

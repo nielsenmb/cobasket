@@ -1,6 +1,11 @@
 """Transparent cointegration research and long-only decision support."""
 
 from cobasket._version import __version__
+from cobasket.basket_calibration import (
+    BasketCalibrationSet,
+    BasketProbabilityCalibration,
+    fit_basket_calibrations,
+)
 from cobasket.basket_validation import (
     BasketValidationProfile,
     BasketValidationSet,
@@ -32,6 +37,8 @@ from cobasket.workflow import PortfolioAnalyzer, PortfolioConfig, PortfolioRepor
 
 __all__ = [
     "__version__",
+    "BasketCalibrationSet",
+    "BasketProbabilityCalibration",
     "BasketValidationProfile",
     "BasketValidationSet",
     "BasketValidationThresholds",
@@ -54,6 +61,7 @@ __all__ = [
     "WatchlistCalibrationResult",
     "build_price_metrics",
     "calibrate_watchlist",
+    "fit_basket_calibrations",
     "run_continuous_walk_forward",
     "run_repeated_walk_forward",
     "run_strategy_experiment",
