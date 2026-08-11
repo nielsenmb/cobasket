@@ -129,8 +129,8 @@ class CobasketDashboard(QMainWindow):
         central = QWidget(self)
         outer = QVBoxLayout(central)
 
-        sources = QGroupBox("Sources")
-        source_layout = QVBoxLayout(sources)
+        self.sources_group = QGroupBox("Manual file controls")
+        source_layout = QVBoxLayout(self.sources_group)
 
         config_row = QHBoxLayout()
         config_row.addWidget(QLabel("Portfolio configuration"))
@@ -153,7 +153,7 @@ class CobasketDashboard(QMainWindow):
         report_row.addWidget(report_browse)
         report_row.addWidget(load_button)
         source_layout.addLayout(report_row)
-        outer.addWidget(sources)
+        outer.addWidget(self.sources_group)
 
         summary = QGroupBox("Portfolio summary")
         summary_layout = QHBoxLayout(summary)

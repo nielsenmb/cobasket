@@ -61,12 +61,14 @@ def test_dashboard_displays_report_without_network_access():
     app.processEvents()
 
 
-def test_guided_dashboard_constructs_workflow_menu():
-    """The guided dashboard should start and expose its workflow menu."""
+def test_guided_dashboard_constructs_workspace_menu_and_hides_manual_sources():
+    """The guided dashboard should foreground the workspace flow instead of raw files."""
     app = QApplication.instance() or QApplication([])
     window = GuidedCobasketDashboard()
     menus = [action.text() for action in window.menuBar().actions()]
-    assert "Workflow" in menus
+    assert "Workspace" in menus
+    assert "Research" in menus
+    assert not window.sources_group.isVisible()
     window.close()
     app.processEvents()
 
@@ -85,7 +87,7 @@ def test_json_classifier_distinguishes_portfolio_and_report(tmp_path):
 
 
 def test_dashboard_uses_separate_config_and_report_fields():
-    """The dashboard should expose distinct paths for analysis and saved reports."""
+    """The base dashboard should retain manual source controls for advanced use."""
     app = QApplication.instance() or QApplication([])
     window = CobasketDashboard()
     assert window.path_edit is not window.report_path_edit

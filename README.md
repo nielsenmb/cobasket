@@ -26,53 +26,47 @@ cobasket-gui
 
 ## Current capabilities
 
-Cobasket supports validated adjusted-price downloads and caching; correlation- and PCA-based candidate-basket screening; Johansen cointegration diagnostics; persistent holdings and watchlists; historical basket validation profiles; pooled and basket-specific probability calibration; long-only recommendations; declarative trading rules; transaction costs and position sizing; single-split, repeated walk-forward, and continuous-account backtests; recommendation history; and a PyQt dashboard.
+Cobasket supports validated adjusted-price downloads and caching; persistence-aware basket discovery; correlation- and PCA-based candidate screening; Johansen cointegration diagnostics; persistent holdings and watchlists; historical basket validation profiles; pooled and basket-specific probability calibration; long-only recommendations; FX-aware portfolio valuation; declarative trading rules; transaction costs and position sizing; single-split, repeated walk-forward, and continuous-account backtests; recommendation history; and a PyQt dashboard.
 
 ## Intended workflow
 
 ```text
 Choose a stock universe
         ↓
-Screen for plausible candidate baskets
+Discover persistent candidate baskets
         ↓
 Historically validate each basket
         ↓
 Fit probability calibration only for validated baskets
         ↓
-Maintain current holdings and watchlist
+Maintain current holdings
         ↓
 Refresh current prices and basket state
         ↓
 Generate Buy / Add / Hold / Reduce / Wait recommendations
 ```
 
-The screening stage is deliberately permissive. Passing the initial Johansen screen or preliminary backtest does **not** make a basket suitable for live recommendations. Validation tests whether the relationship persists across independent historical periods before calibration is allowed to drive an action.
+Discovery is a candidate-selection stage rather than a recommendation. Validation tests whether each relationship persists across independent historical periods before calibration is allowed to drive an action.
 
 ## Basket discovery
 
-Residual-correlation screening:
+The normal discovery command combines candidate clustering, current Johansen screening, historical persistence and weight-stability checks, and a preliminary backtest:
 
 ```bash
-cobasket-screen \
+cobasket-discover \
+    --universe sp500 \
     --period 5y \
-    --top-n 20 \
-    --watchlist-out screened_watchlist.json
+    --watchlist-out discovered_watchlist.json \
+    --table-out discovery_results.csv
 ```
 
-PCA screening:
+Built-in universes include `sp500`, `nasdaq100`, `ftse100`, and `eurostoxx50`. Discovery classifies surviving candidates as `promising`, `borderline`, or `reject`; only promising baskets are exported by default.
 
-```bash
-cobasket-pca-screen \
-    --period 5y \
-    --top-n 20 \
-    --watchlist-out pca_watchlist.json
-```
-
-The output baskets are hypotheses to investigate, not recommendations.
+Lower-level residual-correlation and PCA screens remain available through `cobasket-screen` and `cobasket-pca-screen` for research and diagnostics.
 
 ## Validate discovered baskets
 
-After placing the screened watchlist in `portfolio.json`, run:
+After discovery has created or updated `portfolio.json`, run:
 
 ```bash
 cobasket-validate \
@@ -124,6 +118,35 @@ cobasket-gui
 
 The portfolio editor preserves the watchlist, pooled calibration, basket validation, and basket-specific calibration paths. If none of a ticker's supporting baskets is validated, or no validated basket has enough independent history for calibration, the live action is conservatively reduced to `Wait` when unheld or `Hold` when already owned while retaining the underlying diagnostics.
 
+## GUI workflow
+
+The GUI is organized around a **workspace directory**, not around manually choosing individual JSON files. Use **Open / update workspace…** on the main screen for normal operation. Cobasket inspects the workspace and recommends the next action.
+
+Typical states are:
+
+```text
+Empty workspace
+→ Discover baskets
+→ Edit holdings/base currency if desired
+→ Validate
+→ Calibrate
+→ Generate live report
+
+Partial workspace
+→ Cobasket detects the first missing or stale downstream stage
+→ Continue from that stage
+
+Complete workspace
+→ Refresh recommendations
+→ Re-run discovery only when you want to reconsider the basket universe
+```
+
+The workspace window shows the status of Discovery, Validation, Calibration, and Live report. **Next step** runs only the recommended stage. **Update required stages to report** runs all missing or stale downstream stages in order. Re-running discovery is deliberately separate because it can replace the watchlist and invalidate validation/calibration for the previous baskets.
+
+Manual `portfolio.json` and `report.json` controls are hidden by default but can be enabled from **Workspace → Show manual file controls**.
+
+The **Portfolio** menu contains everyday portfolio actions such as editing holdings, ticker investigation, and recommendation history. Historical simulations, strategy experiments, repeated walk-forward tests, continuous deployment, and policy validation are under **Research** so they are not confused with the normal recommendation workflow.
+
 ## Historical evaluation
 
 Cobasket provides three increasingly realistic levels of strategy testing.
@@ -150,10 +173,6 @@ One simulated account is carried through successive test periods. Cash and posit
 - **Benchmark:** a simpler comparison strategy, such as equal-weight buy-and-hold or cash.
 - **Johansen weights:** coefficients defining a synthetic statistical spread; they are not portfolio allocations.
 
-## GUI workflows
-
-The **Portfolio** menu includes portfolio/watchlist editing, ticker investigation, recommendation history, basket strategy simulation, single-split strategy experiments, repeated walk-forward experiments, continuous deployment, and historical validation. A final simplified workflow view is planned to surface basket discovery, validation status, and current recommendations more directly.
-
 ## Notebooks
 
 See [`notebooks/README.md`](notebooks/README.md) for the current notebook sequence. CI validates notebook structure and syntax-checks ordinary Python code cells.
@@ -161,7 +180,7 @@ See [`notebooks/README.md`](notebooks/README.md) for the current notebook sequen
 ## Caveats
 
 - Historical profitability does not imply future profitability.
-- Initial basket screening can produce relationships that are temporary, unstable, or non-predictive; use validation before acting on them.
+- Initial basket discovery can produce relationships that are temporary, unstable, or non-predictive; use validation before acting on them.
 - Testing many baskets or rule sets can overfit noise.
 - Cointegration relationships and market regimes can break down.
 - Adjusted closing prices do not reproduce intraday execution, bid-ask spreads, taxes, or all broker-specific costs.
