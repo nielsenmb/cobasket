@@ -21,6 +21,7 @@ from cobasket.evidence import (
     cointegration_evidence,
     evaluate_watchlist,
 )
+from cobasket.fx import latest_fx_quote, normalize_currency
 
 
 @dataclass(frozen=True)
@@ -32,20 +33,18 @@ class PortfolioConfig:
     holdings
         Mapping from ticker symbol to currently owned quantity.
     cash
-        Uninvested cash recorded for portfolio context.
+        Uninvested cash, denominated in ``base_currency``.
     watchlist_path
         JSON file containing a monitored basket watchlist.
+    base_currency
+        Currency used for cash, market values, and portfolio totals. When ``None``,
+        Cobasket uses the watchlist's native analysis currency.
     calibration_path
-        Optional global probability-calibration JSON. This remains supported for
-        backward compatibility and diagnostics.
+        Optional global probability-calibration JSON.
     validation_path
-        Optional basket-validation-profile JSON. When supplied, live actions are
-        gated so baskets that are not historically validated cannot generate a
-        positive or reducing recommendation by themselves.
+        Optional basket-validation-profile JSON.
     basket_calibration_path
-        Optional basket-specific probability-calibration JSON. When supplied,
-        live probabilities are derived only from eligible basket-specific models;
-        Cobasket does not fall back to the pooled calibration for missing baskets.
+        Optional basket-specific probability-calibration JSON.
     period
         Historical period requested from the data provider.
     z_window
@@ -59,6 +58,7 @@ class PortfolioConfig:
     holdings: Mapping[str, float]
     cash: float = 0.0
     watchlist_path: str = "portfolio_watchlist.json"
+    base_currency: str | None = None
     calibration_path: str | None = None
     validation_path: str | None = None
     basket_calibration_path: str | None = None
@@ -85,7 +85,9 @@ class PortfolioConfig:
             raise ValueError("min_trace_ratio must be positive")
         if self.max_price_age_days < 0.0:
             raise ValueError("max_price_age_days must be non-negative")
+        base_currency = None if self.base_currency is None else normalize_currency(self.base_currency)
         object.__setattr__(self, "holdings", holdings)
+        object.__setattr__(self, "base_currency", base_currency)
 
     def save(self, path: str | Path) -> Path:
         """Write the configuration to human-readable JSON.
@@ -140,6 +142,9 @@ class TickerReport:
     recommendation: str
     explanation: str
     basket_memberships: tuple[tuple[str, ...], ...]
+    native_currency: str | None = None
+    base_currency: str | None = None
+    fx_rate_to_base: float = 1.0
     basket_validation: tuple[dict[str, str], ...] = ()
     probability_sources: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
@@ -204,6 +209,29 @@ class PortfolioReport:
         return table.sort_values(sort_column, ascending=False, na_position="last", ignore_index=True)
 
 
+def _watchlist_currency_metadata(path: str | Path) -> tuple[str | None, float]:
+    """Read native analysis currency and quote scale from a watchlist JSON.
+
+    Parameters
+    ----------
+    path
+        Existing watchlist JSON.
+
+    Returns
+    -------
+    tuple
+        ``(analysis_currency, price_scale)``. Missing legacy metadata returns
+        ``(None, 1.0)``.
+    """
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    metadata = payload.get("universe_metadata") or {}
+    currency = metadata.get("analysis_currency")
+    price_scale = float(metadata.get("price_scale", 1.0))
+    if price_scale <= 0.0:
+        raise ValueError("watchlist universe price_scale must be positive")
+    return (normalize_currency(currency) if currency else None, price_scale)
+
+
 def _combine_basket_calibrations(
     *,
     ticker: str,
@@ -214,37 +242,7 @@ def _combine_basket_calibrations(
     window: int,
     min_trace_ratio: float,
 ) -> tuple[CalibratedAssetEvidence, tuple[str, ...]] | None:
-    """Combine basket-specific probabilities for one ticker.
-
-    Each eligible basket is evaluated independently at the current date and its
-    own historical probability mapping is applied to that basket's ticker-level
-    evidence. If a ticker belongs to multiple calibrated baskets, posterior
-    summaries are averaged with weights equal to the number of independent
-    historical evaluation dates supporting each basket calibration.
-
-    Parameters
-    ----------
-    ticker
-        Asset symbol being evaluated.
-    evidence
-        Watchlist-level evidence used as the container for the combined result.
-    memberships
-        Watchlist baskets containing ``ticker``.
-    prices
-        Current aligned prices.
-    calibration_by_key
-        Basket-specific calibrations keyed by comma-separated basket membership.
-    window
-        Current spread z-score window.
-    min_trace_ratio
-        Current Johansen acceptance threshold.
-
-    Returns
-    -------
-    tuple or None
-        Combined calibrated evidence and contributing basket keys, or ``None``
-        when no eligible current basket can produce a calibrated probability.
-    """
+    """Combine basket-specific probabilities for one ticker."""
     values: list[tuple[float, float, float, int, int, int, str]] = []
     for basket in memberships:
         key = ", ".join(basket)
@@ -279,18 +277,13 @@ def _combine_basket_calibrations(
     if not values:
         return None
     weights = np.asarray([value[5] for value in values], dtype=float)
-    probability = float(np.average([value[0] for value in values], weights=weights))
-    lower = float(np.average([value[1] for value in values], weights=weights))
-    upper = float(np.average([value[2] for value in values], weights=weights))
-    sample_count = int(sum(value[3] for value in values))
-    horizon = int(round(np.average([value[4] for value in values], weights=weights)))
     combined = CalibratedAssetEvidence(
         evidence=evidence,
-        probability_outperform=probability,
-        probability_lower=lower,
-        probability_upper=upper,
-        sample_count=sample_count,
-        horizon=horizon,
+        probability_outperform=float(np.average([value[0] for value in values], weights=weights)),
+        probability_lower=float(np.average([value[1] for value in values], weights=weights)),
+        probability_upper=float(np.average([value[2] for value in values], weights=weights)),
+        sample_count=int(sum(value[3] for value in values)),
+        horizon=int(round(np.average([value[4] for value in values], weights=weights))),
         benchmark="equal-weight basket",
     )
     return combined, tuple(value[6] for value in values)
@@ -314,14 +307,14 @@ class PortfolioAnalyzer:
         self.probability_policy = probability_policy or ProbabilityRecommendationPolicy()
         self.wide_interval_threshold = wide_interval_threshold
 
-    def run(
-        self,
-        config: PortfolioConfig,
-        *,
-        force_refresh: bool = False,
-    ) -> PortfolioReport:
+    def run(self, config: PortfolioConfig, *, force_refresh: bool = False) -> PortfolioReport:
         """Generate a current portfolio and watchlist report."""
         watchlist = BasketWatchlist.load(config.watchlist_path)
+        native_currency, price_scale = _watchlist_currency_metadata(config.watchlist_path)
+        base_currency = config.base_currency or native_currency or "USD"
+        if native_currency is None:
+            native_currency = base_currency
+
         global_calibration = (
             ProbabilityCalibration.load(config.calibration_path)
             if config.calibration_path is not None
@@ -349,6 +342,7 @@ class PortfolioAnalyzer:
             force_refresh=force_refresh,
             min_coverage=1.0,
         )
+        equity_metadata = getattr(self.data_manager, "last_metadata", None)
         evaluation = evaluate_watchlist(
             prices,
             watchlist,
@@ -395,13 +389,22 @@ class PortfolioAnalyzer:
                 "No basket validation profile was supplied; live recommendations are not reliability-gated."
             )
 
+        held_total = sum(float(config.holdings.get(ticker, 0.0)) for ticker in watchlist.tickers)
+        fx_quote = latest_fx_quote(
+            self.data_manager,
+            native_currency,
+            base_currency,
+            force_refresh=force_refresh,
+        ) if held_total > 0.0 else None
+        fx_rate = 1.0 if fx_quote is None else fx_quote.rate
+
         ticker_reports: list[TickerReport] = []
         for ticker in watchlist.tickers:
             evidence = evidence_by_ticker.get(ticker)
             if evidence is None:
                 continue
             held_quantity = float(config.holdings.get(ticker, 0.0))
-            price = float(prices[ticker].iloc[-1])
+            native_price = float(prices[ticker].iloc[-1]) * price_scale
             memberships = tuple(basket for basket in watchlist.baskets if ticker in basket)
             warnings: list[str] = []
             if len(memberships) == 1:
@@ -494,10 +497,11 @@ class PortfolioAnalyzer:
             calibration_gate = basket_calibration is not None and not probability_sources
             if reliability_gate or calibration_gate:
                 gated_action = "Hold" if held_quantity > 0.0 else "Wait"
-                if reliability_gate:
-                    reason = "none of this ticker's supporting baskets currently has validated historical reliability"
-                else:
-                    reason = "no validated supporting basket has enough independent history for basket-specific calibration"
+                reason = (
+                    "none of this ticker's supporting baskets currently has validated historical reliability"
+                    if reliability_gate
+                    else "no validated supporting basket has enough independent history for basket-specific calibration"
+                )
                 explanation = (
                     f"{gated_action}: current statistical evidence is not used for an actionable "
                     f"recommendation because {reason}. " + explanation
@@ -508,8 +512,8 @@ class PortfolioAnalyzer:
                 TickerReport(
                     ticker=ticker,
                     held_quantity=held_quantity,
-                    current_price=price,
-                    market_value=held_quantity * price,
+                    current_price=native_price,
+                    market_value=held_quantity * native_price * fx_rate,
                     evidence_score=float(evidence.score),
                     evidence_confidence=float(evidence.confidence),
                     probability_outperform=probability,
@@ -519,6 +523,9 @@ class PortfolioAnalyzer:
                     recommendation=recommendation,
                     explanation=explanation,
                     basket_memberships=memberships,
+                    native_currency=native_currency,
+                    base_currency=base_currency,
+                    fx_rate_to_base=fx_rate,
                     basket_validation=tuple(validation_entries),
                     probability_sources=probability_sources,
                     warnings=tuple(warnings),
@@ -547,6 +554,7 @@ class PortfolioAnalyzer:
                     basket_calibration_by_key
                 )
             diagnostics = diagnostics.drop(columns=["basket_key"])
+
         metadata: dict[str, Any] = {
             "watchlist_name": watchlist.name,
             "period": config.period,
@@ -562,14 +570,19 @@ class PortfolioAnalyzer:
                 else "none"
             ),
             "validation_gated": validation is not None,
+            "native_currency": native_currency,
+            "base_currency": base_currency,
+            "price_scale": price_scale,
+            "fx_rate_to_base": fx_rate,
+            "fx_ticker": None if fx_quote is None else fx_quote.ticker,
         }
         if validation is not None:
             metadata["validation_generated_at_utc"] = validation.generated_at_utc
         if basket_calibration is not None:
             metadata["basket_calibration_generated_at_utc"] = basket_calibration.generated_at_utc
             metadata["basket_calibration_count"] = len(basket_calibration.calibrations)
-        if getattr(self.data_manager, "last_metadata", None) is not None:
-            metadata["data"] = asdict(self.data_manager.last_metadata)
+        if equity_metadata is not None:
+            metadata["data"] = asdict(equity_metadata)
 
         return PortfolioReport(
             generated_at_utc=datetime.now(timezone.utc).isoformat(),
