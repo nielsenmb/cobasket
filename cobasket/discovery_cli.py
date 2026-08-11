@@ -203,6 +203,12 @@ def main() -> None:
     parser.add_argument("--period", default="5y")
     parser.add_argument("--distance-threshold", type=float, default=0.8)
     parser.add_argument("--min-trace-stat-ratio", type=float, default=1.0)
+    parser.add_argument(
+        "--max-basket-size",
+        type=int,
+        default=8,
+        help="Maximum hierarchical subcluster size passed to Johansen (default: 8)",
+    )
     parser.add_argument("--train-window", type=int, default=252)
     parser.add_argument("--horizon", type=int, default=20)
     parser.add_argument("--step", type=int, default=20)
@@ -257,10 +263,6 @@ def main() -> None:
     parser.add_argument("--force-refresh", action="store_true")
     args = parser.parse_args()
 
-    # yfinance logs provider-level 404s directly to stderr. Cobasket handles
-    # unavailable constituents itself, so keep the CLI output focused on the
-    # summarized skipped-symbol warning instead of presenting provider noise as
-    # a fatal workflow error.
     logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
     universe = get_universe(
@@ -311,6 +313,7 @@ def main() -> None:
             market_ticker=universe.market_ticker,
             distance_threshold=args.distance_threshold,
             min_trace_ratio=args.min_trace_stat_ratio,
+            max_basket_size=args.max_basket_size,
             cost_bps=args.cost_bps,
             train_window=args.train_window,
             horizon=args.horizon,

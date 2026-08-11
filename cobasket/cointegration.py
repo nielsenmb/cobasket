@@ -7,7 +7,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from scipy.cluster.hierarchy import fcluster, linkage
+from scipy.cluster.hierarchy import linkage, to_tree
 from scipy.spatial.distance import squareform
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 
@@ -128,24 +128,111 @@ def remove_market_factor(
     return pd.DataFrame(residual_values, index=returns.index, columns=asset_columns)
 
 
+def _hierarchical_subclusters(
+    linkage_matrix: np.ndarray,
+    labels: Sequence[str],
+    *,
+    distance_threshold: float,
+    max_basket_size: int,
+) -> list[list[str]]:
+    """Extract nested candidate subclusters below a correlation-distance cut.
+
+    Parameters
+    ----------
+    linkage_matrix
+        SciPy hierarchical linkage matrix.
+    labels
+        Asset labels in the same order used to construct the linkage matrix.
+    distance_threshold
+        Maximum linkage distance defining a related-stock neighborhood.
+    max_basket_size
+        Largest nested cluster retained as a Johansen candidate.
+
+    Returns
+    -------
+    list of list of str
+        Unique hierarchical subclusters containing between two and
+        ``max_basket_size`` assets. Large neighborhoods are recursively explored
+        instead of being discarded.
+    """
+    if max_basket_size < 2:
+        raise ValueError("max_basket_size must be at least 2")
+    root = to_tree(linkage_matrix)
+    candidates: dict[tuple[str, ...], None] = {}
+
+    def members(node) -> tuple[str, ...]:
+        leaf_ids = node.pre_order(lambda item: item.id)
+        return tuple(str(labels[index]) for index in leaf_ids)
+
+    def collect_within(node) -> None:
+        if node.is_leaf():
+            return
+        node_members = members(node)
+        if 2 <= len(node_members) <= max_basket_size:
+            candidates.setdefault(node_members, None)
+        collect_within(node.left)
+        collect_within(node.right)
+
+    def visit(node) -> None:
+        if node.is_leaf():
+            return
+        if node.dist <= distance_threshold:
+            collect_within(node)
+            return
+        visit(node.left)
+        visit(node.right)
+
+    visit(root)
+    return [list(candidate) for candidate in candidates]
+
+
 def cluster_candidates(
     residual_returns: pd.DataFrame,
     distance_threshold: float = 1.0,
+    max_basket_size: int = 8,
 ) -> tuple[list[list[str]], np.ndarray, pd.DataFrame]:
-    """Cluster assets using correlation distance between residual returns."""
+    """Cluster assets and extract nested related-stock candidate baskets.
+
+    Hierarchical clustering first identifies neighborhoods below
+    ``distance_threshold``. Every nested linkage cluster containing two through
+    ``max_basket_size`` assets is retained as a candidate. This prevents a valid
+    small basket from disappearing merely because additional related assets make
+    its outer neighborhood larger than the Johansen dimension cap.
+
+    Parameters
+    ----------
+    residual_returns
+        Market-factor-adjusted asset returns.
+    distance_threshold
+        Correlation-distance cut defining related-stock neighborhoods.
+    max_basket_size
+        Maximum number of assets retained in one Johansen candidate.
+
+    Returns
+    -------
+    candidate_baskets
+        Unique nested hierarchical clusters within the requested size range.
+    linkage_matrix
+        SciPy average-linkage hierarchy.
+    correlation
+        Residual-return correlation matrix.
+    """
     if residual_returns.shape[1] < 2:
         raise ValueError("clustering requires at least two return series")
+    if max_basket_size < 2:
+        raise ValueError("max_basket_size must be at least 2")
     correlation = residual_returns.corr()
     distance = (1.0 - correlation).clip(lower=0.0, upper=2.0)
     distance_values = distance.to_numpy(dtype=float, copy=True)
     np.fill_diagonal(distance_values, 0.0)
     condensed = squareform(distance_values, checks=False)
     linkage_matrix = linkage(condensed, method="average")
-    cluster_ids = fcluster(linkage_matrix, t=distance_threshold, criterion="distance")
-    clusters: dict[int, list[str]] = {}
-    for ticker, cluster_id in zip(correlation.columns, cluster_ids):
-        clusters.setdefault(int(cluster_id), []).append(str(ticker))
-    candidate_baskets = [members for members in clusters.values() if len(members) >= 2]
+    candidate_baskets = _hierarchical_subclusters(
+        linkage_matrix,
+        correlation.columns,
+        distance_threshold=distance_threshold,
+        max_basket_size=max_basket_size,
+    )
     return candidate_baskets, linkage_matrix, correlation
 
 
@@ -172,7 +259,9 @@ def screen_universe(
         Required ratio between the Johansen trace statistic and its 95 percent
         critical value.
     max_basket_size
-        Maximum number of assets passed to the Johansen test.
+        Maximum number of assets passed to the Johansen test. Larger correlation
+        neighborhoods are recursively represented by nested subclusters rather
+        than discarded.
     cache_dir
         Directory used by the price-data cache.
     market_ticker
@@ -196,13 +285,15 @@ def screen_universe(
     candidate_baskets, linkage_matrix, correlation = cluster_candidates(
         residuals,
         distance_threshold,
+        max_basket_size=max_basket_size,
     )
-    print(f"Found {len(candidate_baskets)} candidate cluster(s) with >=2 members")
+    print(
+        f"Found {len(candidate_baskets)} hierarchical candidate basket(s) "
+        f"with 2-{max_basket_size} members"
+    )
 
     confirmed = []
     for basket in candidate_baskets:
-        if len(basket) < 2 or len(basket) > max_basket_size:
-            continue
         basket_prices = prices[basket].dropna()
         if len(basket_prices) < 100:
             continue
