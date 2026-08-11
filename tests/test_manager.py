@@ -64,6 +64,28 @@ def test_failed_ticker_does_not_destroy_successful_data(tmp_path):
     assert manager.last_metadata.failed_tickers == ("BAD",)
 
 
+def test_failed_batch_is_retried_per_ticker(tmp_path):
+    """One stale symbol should not discard the other symbols in its failed batch."""
+    calls = []
+
+    def downloader(**kwargs):
+        tickers = kwargs["tickers"]
+        calls.append(tickers)
+        if isinstance(tickers, list):
+            raise RuntimeError("provider rejected batch")
+        if tickers == "BAD":
+            raise RuntimeError("symbol unavailable")
+        return yahoo_frame(tickers)
+
+    manager = DataManager(tmp_path, downloader=downloader, cache_max_age_days=None)
+    prices = manager.prices(["AAPL", "BAD", "MSFT"], period="1y")
+
+    assert prices.columns.tolist() == ["AAPL", "MSFT"]
+    assert calls == [["AAPL", "BAD", "MSFT"], "AAPL", "BAD", "MSFT"]
+    assert manager.last_metadata.downloaded_tickers == ("AAPL", "MSFT")
+    assert manager.last_metadata.failed_tickers == ("BAD",)
+
+
 def test_all_failed_tickers_raise(tmp_path):
     manager = DataManager(
         tmp_path, downloader=lambda **kwargs: pd.DataFrame(), cache_max_age_days=None
