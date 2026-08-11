@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 pytest.importorskip("PyQt6")
@@ -29,6 +32,18 @@ def test_guided_workflow_uses_expected_output_files() -> None:
     assert "portfolio.json" in validation
     assert "portfolio.json" in calibration
     assert "portfolio.json" in report
+
+
+def test_report_module_invocation_runs_cli() -> None:
+    """The report module used by the GUI should execute its CLI entry point."""
+    result = subprocess.run(
+        [sys.executable, "-m", "cobasket.report_cli", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "Generate a current long-only Cobasket portfolio report." in result.stdout
 
 
 def test_unknown_workflow_stage_is_rejected() -> None:

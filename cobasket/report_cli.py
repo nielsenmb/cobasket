@@ -90,3 +90,7 @@ def main() -> None:
         for warning in report.warnings:
             print(f"  - {warning}")
     print(f"\nSaved report to {args.output}")
+
+
+if __name__ == "__main__":
+    main()
