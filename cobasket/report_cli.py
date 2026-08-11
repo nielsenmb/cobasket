@@ -3,8 +3,50 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
+import warnings
 
+import numpy as np
+
+from cobasket.data import DataManager
+from cobasket.evidence import BasketWatchlist, cointegration_evidence
 from cobasket.workflow import PortfolioAnalyzer, PortfolioConfig
+
+
+def _diagnose_failed_baskets(config: PortfolioConfig, manager: DataManager) -> tuple[str, ...]:
+    """Return readable reasons for baskets that cannot produce current evidence.
+
+    Parameters
+    ----------
+    config
+        Portfolio configuration used for the live report.
+    manager
+        Data manager used by the report so the diagnostic pass can reuse cached
+        adjusted prices.
+
+    Returns
+    -------
+    tuple of str
+        One message per basket that fails current evaluation.
+    """
+    watchlist = BasketWatchlist.load(config.watchlist_path)
+    prices = manager.prices(watchlist.tickers, period=config.period, min_coverage=1.0)
+    failures: list[str] = []
+    for basket in watchlist.baskets:
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="Casting complex values to real discards the imaginary part",
+                )
+                cointegration_evidence(
+                    prices.loc[:, list(basket)],
+                    window=config.z_window,
+                    min_trace_ratio=config.min_trace_ratio,
+                )
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            failures.append(f"{', '.join(basket)}: {type(exc).__name__}: {exc}")
+    return tuple(failures)
 
 
 def main() -> None:
@@ -32,10 +74,27 @@ def main() -> None:
         "calibration_path": args.calibration or config.calibration_path,
         "period": args.period or config.period,
     }
-    report = PortfolioAnalyzer().run(
-        PortfolioConfig(**payload),
-        force_refresh=args.force_refresh,
-    )
+    resolved = PortfolioConfig(**payload)
+    manager = DataManager()
+    analyzer = PortfolioAnalyzer(data_manager=manager)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Casting complex values to real discards the imaginary part",
+        )
+        report = analyzer.run(resolved, force_refresh=args.force_refresh)
+
+    if any("failed current evaluation" in item for item in report.warnings):
+        failures = _diagnose_failed_baskets(resolved, manager)
+        if failures:
+            metadata = dict(report.metadata)
+            metadata["failed_basket_diagnostics"] = list(failures)
+            report = replace(
+                report,
+                warnings=report.warnings + tuple(f"Basket failure: {item}" for item in failures),
+                metadata=metadata,
+            )
+
     report.save(args.output)
     print(report.table().to_string(index=False))
     if report.warnings:
