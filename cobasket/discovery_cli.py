@@ -12,12 +12,36 @@ from cobasket.discovery import discover_baskets
 from cobasket.evidence import BasketWatchlist
 
 
-def _save_watchlist(table, path: Path, top_n: int, universe) -> int:
-    """Save usable ranked baskets and attach discovery-universe metadata."""
-    usable = table.loc[table["usable"]].head(top_n) if not table.empty else table
-    if usable.empty:
+def _save_watchlist(table, path: Path, top_n: int, universe, *, include_borderline: bool = False) -> int:
+    """Save ranked discovery baskets and attach universe metadata.
+
+    Parameters
+    ----------
+    table
+        Discovery result table.
+    path
+        Watchlist JSON destination.
+    top_n
+        Maximum number of baskets to save.
+    universe
+        Resolved universe specification.
+    include_borderline
+        Include ``borderline`` baskets as well as ``promising`` baskets.
+
+    Returns
+    -------
+    int
+        Number of saved baskets.
+    """
+    if table.empty:
+        selected = table
+    elif include_borderline:
+        selected = table.loc[table["status"].isin(["promising", "borderline"])].head(top_n)
+    else:
+        selected = table.loc[table["status"] == "promising"].head(top_n)
+    if selected.empty:
         return 0
-    baskets = tuple(tuple(item) for item in usable["basket"])
+    baskets = tuple(tuple(item) for item in selected["basket"])
     BasketWatchlist(
         baskets=baskets,
         name=f"Cobasket persistent discovery ({universe.name})",
@@ -55,8 +79,12 @@ def main() -> None:
     parser.add_argument("--train-window", type=int, default=252)
     parser.add_argument("--horizon", type=int, default=20)
     parser.add_argument("--step", type=int, default=20)
-    parser.add_argument("--min-persistence", type=float, default=0.15)
-    parser.add_argument("--min-weight-stability", type=float, default=0.60)
+    parser.add_argument("--min-persistence", type=float, default=0.15, help="Loose persistence floor below which candidates are rejected")
+    parser.add_argument("--min-weight-stability", type=float, default=0.60, help="Loose weight-stability floor below which candidates are rejected")
+    parser.add_argument("--promising-persistence", type=float, default=0.30)
+    parser.add_argument("--promising-evaluations", type=int, default=15)
+    parser.add_argument("--promising-weight-stability", type=float, default=0.80)
+    parser.add_argument("--include-borderline", action="store_true", help="Also export borderline baskets to the watchlist")
     parser.add_argument("--cost-bps", type=float, default=10.0)
     parser.add_argument("--top-n", type=int, default=20)
     parser.add_argument("--watchlist-out", default="discovered_watchlist.json")
@@ -93,6 +121,9 @@ def main() -> None:
             step=args.step,
             min_persistence=args.min_persistence,
             min_weight_stability=args.min_weight_stability,
+            promising_persistence=args.promising_persistence,
+            promising_evaluations=args.promising_evaluations,
+            promising_weight_stability=args.promising_weight_stability,
         )
 
     table = result.table.copy()
@@ -108,12 +139,19 @@ def main() -> None:
     table_path.parent.mkdir(parents=True, exist_ok=True)
     display.to_csv(table_path, index=False)
     watchlist_path = Path(args.watchlist_out).expanduser().resolve()
-    count = _save_watchlist(table, watchlist_path, args.top_n, universe)
+    count = _save_watchlist(
+        table,
+        watchlist_path,
+        args.top_n,
+        universe,
+        include_borderline=args.include_borderline,
+    )
     print(f"\nSaved detailed discovery table to {table_path}")
     if count:
-        print(f"Saved {count} usable basket(s) to {watchlist_path}")
+        label = "promising/borderline" if args.include_borderline else "promising"
+        print(f"Saved {count} {label} basket(s) to {watchlist_path}")
     else:
-        print("No basket passed the persistence/stability thresholds; watchlist was not created.")
+        print("No promising basket passed the discovery thresholds; watchlist was not created.")
 
 
 if __name__ == "__main__":

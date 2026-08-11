@@ -20,7 +20,8 @@ class DiscoveryResult:
     Parameters
     ----------
     table
-        One row per successfully backtested candidate, ranked by discovery score.
+        One row per successfully backtested candidate, ranked by discovery status
+        and score.
     prices
         Aligned prices used for discovery.
     """
@@ -93,9 +94,7 @@ def _persistence_metrics(
             vectors.append(vector / norm)
     if len(vectors) >= 2:
         reference = vectors[0]
-        stability = float(
-            np.mean([abs(float(np.dot(reference, vector))) for vector in vectors[1:]])
-        )
+        stability = float(np.mean([abs(float(np.dot(reference, vector))) for vector in vectors[1:]]))
     else:
         stability = 0.0
     return {
@@ -104,6 +103,52 @@ def _persistence_metrics(
         "persistence": accepted / possible if possible else 0.0,
         "weight_stability": stability,
     }
+
+
+def _discovery_status(
+    *,
+    persistence: float,
+    accepted_evaluations: int,
+    weight_stability: float,
+    sharpe: float,
+    min_persistence: float,
+    min_weight_stability: float,
+    promising_persistence: float,
+    promising_evaluations: int,
+    promising_weight_stability: float,
+) -> str:
+    """Classify a discovered basket as promising, borderline, or reject.
+
+    Parameters
+    ----------
+    persistence
+        Fraction of historical evaluation dates passing the Johansen threshold.
+    accepted_evaluations
+        Number of accepted non-overlapping historical evaluation dates.
+    weight_stability
+        Sign-invariant mean similarity of historical Johansen vectors.
+    sharpe
+        Preliminary out-of-fit Sharpe ratio.
+    min_persistence, min_weight_stability
+        Loose thresholds required to avoid outright rejection.
+    promising_persistence, promising_evaluations, promising_weight_stability
+        Stricter thresholds required for watchlist export.
+
+    Returns
+    -------
+    str
+        ``promising``, ``borderline``, or ``reject``.
+    """
+    if persistence < min_persistence or weight_stability < min_weight_stability:
+        return "reject"
+    if (
+        persistence >= promising_persistence
+        and accepted_evaluations >= promising_evaluations
+        and weight_stability >= promising_weight_stability
+        and sharpe > 0.0
+    ):
+        return "promising"
+    return "borderline"
 
 
 def discover_baskets(
@@ -119,13 +164,16 @@ def discover_baskets(
     step: int = 20,
     min_persistence: float = 0.15,
     min_weight_stability: float = 0.60,
+    promising_persistence: float = 0.30,
+    promising_evaluations: int = 15,
+    promising_weight_stability: float = 0.80,
 ) -> DiscoveryResult:
     """Run thorough persistence-aware basket discovery.
 
     Candidate clustering and current Johansen screening are followed by a
-    preliminary backtest and independent historical Johansen fits. Baskets that
-    fail the persistence or weight-stability thresholds remain in the returned
-    table with ``usable=False`` so rejection is inspectable.
+    preliminary backtest and independent historical Johansen fits. Results are
+    labelled ``promising``, ``borderline``, or ``reject``. Only ``promising``
+    baskets should normally be exported to a live watchlist.
 
     Parameters
     ----------
@@ -147,10 +195,10 @@ def discover_baskets(
         Forward horizon used to space independent evaluations.
     step
         Evaluation spacing. Defaults to ``horizon`` for non-overlapping windows.
-    min_persistence
-        Minimum accepted fraction of nominal historical fits.
-    min_weight_stability
-        Minimum sign-invariant mean cosine similarity of historical weights.
+    min_persistence, min_weight_stability
+        Loose thresholds separating borderline candidates from rejects.
+    promising_persistence, promising_evaluations, promising_weight_stability
+        Stricter thresholds required for ``promising`` status.
 
     Returns
     -------
@@ -179,18 +227,30 @@ def discover_baskets(
         trace_ratio = float(result["johansen_stat"] / result["johansen_crit"])
         persistence = float(metrics["persistence"])
         stability = float(metrics["weight_stability"])
-        usable = persistence >= min_persistence and stability >= min_weight_stability
+        accepted = int(metrics["accepted_evaluations"])
         sharpe = float(result["sharpe"])
+        status = _discovery_status(
+            persistence=persistence,
+            accepted_evaluations=accepted,
+            weight_stability=stability,
+            sharpe=sharpe,
+            min_persistence=min_persistence,
+            min_weight_stability=min_weight_stability,
+            promising_persistence=promising_persistence,
+            promising_evaluations=promising_evaluations,
+            promising_weight_stability=promising_weight_stability,
+        )
         discovery_score = persistence * stability * max(sharpe, 0.0)
         rows.append(
             {
                 "basket": basket,
-                "usable": usable,
+                "status": status,
+                "usable": status == "promising",
                 "discovery_score": discovery_score,
                 "trace_ratio": trace_ratio,
                 "persistence": persistence,
                 "weight_stability": stability,
-                "accepted_evaluations": int(metrics["accepted_evaluations"]),
+                "accepted_evaluations": accepted,
                 "possible_evaluations": int(metrics["possible_evaluations"]),
                 "sharpe": sharpe,
                 "total_return": float(result["total_return"]),
@@ -200,9 +260,11 @@ def discover_baskets(
         )
     table = pd.DataFrame(rows)
     if not table.empty:
+        rank = {"promising": 0, "borderline": 1, "reject": 2}
+        table["_status_rank"] = table["status"].map(rank)
         table = table.sort_values(
-            ["usable", "discovery_score", "persistence", "weight_stability"],
-            ascending=[False, False, False, False],
+            ["_status_rank", "discovery_score", "persistence", "weight_stability"],
+            ascending=[True, False, False, False],
             ignore_index=True,
-        )
+        ).drop(columns="_status_rank")
     return DiscoveryResult(table=table, prices=prices)
