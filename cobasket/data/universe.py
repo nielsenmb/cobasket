@@ -49,7 +49,25 @@ class UniverseSpec:
 
 
 def _download_tables(url: str, label: str) -> list[pd.DataFrame]:
-    """Download HTML tables with a browser-like user agent."""
+    """Download HTML tables with a browser-like user agent.
+
+    Parameters
+    ----------
+    url
+        Source webpage containing constituent tables.
+    label
+        Human-readable universe label used in error messages.
+
+    Returns
+    -------
+    list of pandas.DataFrame
+        Parsed HTML tables.
+
+    Raises
+    ------
+    DownloadError
+        If the source cannot be retrieved or parsed.
+    """
     request = Request(
         url,
         headers={
@@ -65,6 +83,29 @@ def _download_tables(url: str, label: str) -> list[pd.DataFrame]:
         return pd.read_html(StringIO(html))
     except Exception as exc:
         raise DownloadError(f"failed to retrieve {label} constituents: {exc}") from exc
+
+
+def _download_sp500_table() -> pd.DataFrame:
+    """Download the S&P 500 constituent table.
+
+    This small compatibility wrapper is retained as a stable test seam for the
+    established S&P 500 cache/fallback behaviour while the generic universe
+    downloader supports additional markets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Constituent table containing a ``Symbol`` column.
+
+    Raises
+    ------
+    DownloadError
+        If no downloaded table contains a ``Symbol`` column.
+    """
+    for table in _download_tables(SP500_URL, "sp500"):
+        if "Symbol" in table.columns:
+            return table
+    raise DownloadError("sp500 constituent page did not contain a Symbol column")
 
 
 def _cached_tickers(
@@ -110,16 +151,45 @@ def _cached_tickers(
     return tickers
 
 
-def get_sp500_tickers(cache_dir: str | Path = "price_cache", *, force_refresh: bool = False) -> list[str]:
-    """Return current S&P 500 Yahoo-compatible symbols."""
-    return _cached_tickers(
-        name="sp500",
-        url=SP500_URL,
-        column_candidates=("Symbol",),
-        cache_dir=cache_dir,
-        force_refresh=force_refresh,
-        transform=lambda value: value.replace(".", "-"),
-    )
+def get_sp500_tickers(
+    cache_dir: str | Path = "price_cache",
+    *,
+    force_refresh: bool = False,
+) -> list[str]:
+    """Return current S&P 500 Yahoo-compatible symbols.
+
+    Parameters
+    ----------
+    cache_dir
+        Constituent-cache directory.
+    force_refresh
+        Attempt to refresh the online constituent table first.
+
+    Returns
+    -------
+    list of str
+        Yahoo-compatible S&P 500 ticker symbols.
+    """
+    cache_path = Path(cache_dir) / "sp500_tickers.csv"
+    if cache_path.exists() and not force_refresh:
+        return pd.read_csv(cache_path)["ticker"].astype(str).tolist()
+
+    try:
+        table = _download_sp500_table()
+        tickers = table["Symbol"].astype(str).str.replace(".", "-", regex=False).tolist()
+    except DownloadError:
+        if cache_path.exists():
+            warnings.warn(
+                "Could not refresh sp500 constituents; using the existing cached universe.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return pd.read_csv(cache_path)["ticker"].astype(str).tolist()
+        raise
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"ticker": tickers}).to_csv(cache_path, index=False)
+    return tickers
 
 
 def get_nasdaq100_tickers(cache_dir: str | Path = "price_cache", *, force_refresh: bool = False) -> list[str]:
