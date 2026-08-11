@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from cobasket.basket_validation import (
@@ -83,4 +84,4 @@ def test_weight_stability_is_invariant_to_overall_sign_flip():
             "weight": [0.6, -0.4, -0.6, 0.4],
         }
     )
-    assert _weight_stability(records, ("AAA", "BBB")) == 1.0
+    assert np.isclose(_weight_stability(records, ("AAA", "BBB")), 1.0)
