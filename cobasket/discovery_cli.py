@@ -12,6 +12,7 @@ import warnings
 from cobasket.data.universe import get_universe
 from cobasket.discovery import discover_baskets
 from cobasket.evidence import BasketWatchlist
+from cobasket.thresholds import MIN_ACCEPTED_EVALUATIONS
 from cobasket.workflow import PortfolioConfig
 
 
@@ -164,7 +165,7 @@ def main() -> None:
     parser.add_argument("--min-persistence", type=float, default=0.15, help="Loose persistence floor below which candidates are rejected")
     parser.add_argument("--min-weight-stability", type=float, default=0.60, help="Loose weight-stability floor below which candidates are rejected")
     parser.add_argument("--promising-persistence", type=float, default=0.30)
-    parser.add_argument("--promising-evaluations", type=int, default=15)
+    parser.add_argument("--promising-evaluations", type=int, default=MIN_ACCEPTED_EVALUATIONS)
     parser.add_argument("--promising-weight-stability", type=float, default=0.80)
     parser.add_argument("--include-borderline", action="store_true", help="Also export borderline baskets to the watchlist")
     parser.add_argument("--cost-bps", type=float, default=10.0)
