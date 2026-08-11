@@ -50,7 +50,7 @@ def test_ftse250_extracts_epic_from_share_label(monkeypatch, tmp_path):
         ],
     )
     tickers = universe_module.get_ftse250_tickers(tmp_path, force_refresh=True)
-    assert tickers == ["3IN.L", "AO-.L"]
+    assert tickers == ["3IN.L", "AO.L"]
 
 
 def test_ftse350_combines_large_and_mid_cap_constituents(monkeypatch, tmp_path):
