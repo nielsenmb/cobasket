@@ -215,7 +215,8 @@ def remove_market_factor(
     assets = returns.loc[:, asset_columns].to_numpy(dtype=float)
     centered_market = market - market.mean()
     centered_assets = assets - assets.mean(axis=0)
-    betas = np.mean(centered_assets * centered_market[:, None], axis=0) / market_variance
+    covariance = np.sum(centered_assets * centered_market[:, None], axis=0) / (len(market) - 1)
+    betas = covariance / market_variance
     residual_values = assets - market[:, None] * betas[None, :]
     return pd.DataFrame(residual_values, index=returns.index, columns=asset_columns)
 
