@@ -1,4 +1,4 @@
-"""First PyQt dashboard for Cobasket portfolio reports."""
+"""PyQt dashboard for Cobasket portfolio reports."""
 
 from __future__ import annotations
 
@@ -32,16 +32,34 @@ from cobasket.workflow import PortfolioAnalyzer, PortfolioConfig, PortfolioRepor
 from .models import portfolio_report_from_dict, probability_label
 
 
-class AnalysisWorker(QObject):
-    """Run a fresh portfolio analysis outside the GUI thread.
+def classify_cobasket_json(path: str | Path) -> str:
+    """Classify a Cobasket JSON file as a configuration or report.
 
     Parameters
     ----------
-    config_path
-        Path to a saved :class:`~cobasket.workflow.PortfolioConfig`.
-    force_refresh
-        Whether to bypass the local market-data cache.
+    path
+        Existing JSON file to inspect.
+
+    Returns
+    -------
+    str
+        Either ``"portfolio"`` or ``"report"``.
+
+    Raises
+    ------
+    ValueError
+        If the file does not match either supported schema.
     """
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(payload, dict) and "holdings" in payload and "watchlist_path" in payload:
+        return "portfolio"
+    if isinstance(payload, dict) and "generated_at_utc" in payload and "tickers" in payload:
+        return "report"
+    raise ValueError("JSON is neither a Cobasket portfolio configuration nor a saved report")
+
+
+class AnalysisWorker(QObject):
+    """Run a fresh portfolio analysis outside the GUI thread."""
 
     finished = pyqtSignal(object)
     failed = pyqtSignal(str)
@@ -56,7 +74,7 @@ class AnalysisWorker(QObject):
         try:
             config = PortfolioConfig.load(self.config_path)
             report = PortfolioAnalyzer().run(config, force_refresh=self.force_refresh)
-        except Exception as exc:  # GUI boundary: display backend failures clearly.
+        except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
             return
         self.finished.emit(report)
@@ -78,7 +96,7 @@ class CobasketDashboard(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Cobasket dashboard")
-        self.resize(1180, 760)
+        self.resize(1180, 800)
         self.report: PortfolioReport | None = None
         self._thread: QThread | None = None
         self._worker: AnalysisWorker | None = None
@@ -89,18 +107,31 @@ class CobasketDashboard(QMainWindow):
         central = QWidget(self)
         outer = QVBoxLayout(central)
 
-        controls = QGroupBox("Report source")
-        control_layout = QHBoxLayout(controls)
+        sources = QGroupBox("Sources")
+        source_layout = QVBoxLayout(sources)
+
+        config_row = QHBoxLayout()
+        config_row.addWidget(QLabel("Portfolio configuration"))
         self.path_edit = QLineEdit()
-        self.path_edit.setPlaceholderText("portfolio.json or report.json")
-        browse_button = QPushButton("Browse")
+        self.path_edit.setPlaceholderText("portfolio.json")
+        config_browse = QPushButton("Browse…")
         self.refresh_button = QPushButton("Run analysis")
+        config_row.addWidget(self.path_edit, 1)
+        config_row.addWidget(config_browse)
+        config_row.addWidget(self.refresh_button)
+        source_layout.addLayout(config_row)
+
+        report_row = QHBoxLayout()
+        report_row.addWidget(QLabel("Saved report"))
+        self.report_path_edit = QLineEdit()
+        self.report_path_edit.setPlaceholderText("report.json")
+        report_browse = QPushButton("Browse…")
         load_button = QPushButton("Load report")
-        control_layout.addWidget(self.path_edit, 1)
-        control_layout.addWidget(browse_button)
-        control_layout.addWidget(self.refresh_button)
-        control_layout.addWidget(load_button)
-        outer.addWidget(controls)
+        report_row.addWidget(self.report_path_edit, 1)
+        report_row.addWidget(report_browse)
+        report_row.addWidget(load_button)
+        source_layout.addLayout(report_row)
+        outer.addWidget(sources)
 
         summary = QGroupBox("Portfolio summary")
         summary_layout = QHBoxLayout(summary)
@@ -108,12 +139,7 @@ class CobasketDashboard(QMainWindow):
         self.cash_label = QLabel("Cash: —")
         self.invested_label = QLabel("Invested: —")
         self.price_date_label = QLabel("Latest prices: —")
-        for widget in (
-            self.total_value_label,
-            self.cash_label,
-            self.invested_label,
-            self.price_date_label,
-        ):
+        for widget in (self.total_value_label, self.cash_label, self.invested_label, self.price_date_label):
             summary_layout.addWidget(widget)
         summary_layout.addStretch(1)
         outer.addWidget(summary)
@@ -157,33 +183,42 @@ class CobasketDashboard(QMainWindow):
         splitter.setSizes([760, 420])
         outer.addWidget(splitter, 1)
 
-        self.status_label = QLabel("Load a saved report or run a portfolio analysis.")
+        self.status_label = QLabel("Choose a portfolio configuration to analyse or a saved report to display.")
         outer.addWidget(self.status_label)
         self.setCentralWidget(central)
 
-        browse_button.clicked.connect(self._browse)
+        config_browse.clicked.connect(self._browse_config)
+        report_browse.clicked.connect(self._browse_report)
         load_button.clicked.connect(self.load_report)
         self.refresh_button.clicked.connect(self.run_analysis)
         self.table.itemSelectionChanged.connect(self._show_selected_ticker)
 
-    def _browse(self) -> None:
-        """Choose a JSON portfolio configuration or report file."""
+    def _browse_config(self) -> None:
+        """Choose a portfolio configuration JSON file."""
         path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Choose Cobasket JSON file",
-            str(Path.cwd()),
-            "JSON files (*.json);;All files (*)",
+            self, "Choose portfolio configuration", str(Path.cwd()), "JSON files (*.json);;All files (*)"
         )
         if path:
             self.path_edit.setText(path)
 
+    def _browse_report(self) -> None:
+        """Choose a saved portfolio report JSON file."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose saved report", str(Path.cwd()), "JSON files (*.json);;All files (*)"
+        )
+        if path:
+            self.report_path_edit.setText(path)
+
     def load_report(self) -> None:
         """Load and display an existing serialized portfolio report."""
-        path = Path(self.path_edit.text().strip())
+        path = Path(self.report_path_edit.text().strip())
         if not path.exists():
-            QMessageBox.warning(self, "Missing file", "Choose an existing report JSON file.")
+            QMessageBox.warning(self, "Missing report", "Choose an existing saved report JSON file.")
             return
         try:
+            kind = classify_cobasket_json(path)
+            if kind != "report":
+                raise ValueError("Selected file is a portfolio configuration, not a saved report")
             payload = json.loads(path.read_text(encoding="utf-8"))
             report = portfolio_report_from_dict(payload)
         except Exception as exc:
@@ -196,10 +231,18 @@ class CobasketDashboard(QMainWindow):
         """Run a fresh analysis from a portfolio configuration JSON file."""
         path = Path(self.path_edit.text().strip())
         if not path.exists():
+            QMessageBox.warning(self, "Missing configuration", "Choose an existing portfolio configuration JSON file.")
+            return
+        try:
+            kind = classify_cobasket_json(path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Invalid configuration", str(exc))
+            return
+        if kind != "portfolio":
             QMessageBox.warning(
                 self,
-                "Missing file",
-                "Choose an existing portfolio configuration JSON file.",
+                "Portfolio configuration required",
+                "Run analysis requires portfolio.json. A saved report can only be loaded in the Saved report row.",
             )
             return
         if self._thread is not None:
@@ -239,13 +282,7 @@ class CobasketDashboard(QMainWindow):
         self._thread = None
 
     def set_report(self, report: PortfolioReport) -> None:
-        """Populate all dashboard widgets from a portfolio report.
-
-        Parameters
-        ----------
-        report
-            Completed report from the Stage 6 workflow backend.
-        """
+        """Populate all dashboard widgets from a portfolio report."""
         self.report = report
         self.total_value_label.setText(f"Total value: ${report.total_value:,.2f}")
         self.cash_label.setText(f"Cash: ${report.cash:,.2f}")
@@ -271,11 +308,7 @@ class CobasketDashboard(QMainWindow):
         self.table.resizeColumnsToContents()
         self.table.setSortingEnabled(True)
 
-        warning_text = (
-            "\n".join(f"• {item}" for item in report.warnings)
-            if report.warnings
-            else "No report-level warnings."
-        )
+        warning_text = "\n".join(f"• {item}" for item in report.warnings) if report.warnings else "No report-level warnings."
         self.warnings_text.setPlainText(warning_text)
         if report.tickers:
             self.table.selectRow(0)
