@@ -73,8 +73,12 @@ class StrategySimulationDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Basket strategy simulation")
         self.resize(1150, 850)
+        config_path = Path(config_path)
         portfolio = PortfolioConfig.load(config_path)
-        self.watchlist = BasketWatchlist.load(portfolio.watchlist_path)
+        watchlist_path = Path(portfolio.watchlist_path)
+        if not watchlist_path.is_absolute():
+            watchlist_path = config_path.parent / watchlist_path
+        self.watchlist = BasketWatchlist.load(watchlist_path)
         self._thread: QThread | None = None
         self._worker: StrategyWorker | None = None
         self._build_ui(portfolio)
@@ -171,6 +175,9 @@ class StrategySimulationDialog(QDialog):
     def run_simulation(self) -> None:
         """Start one historical simulation in a worker thread."""
         if self._thread is not None:
+            return
+        if self.basket_combo.count() == 0:
+            QMessageBox.warning(self, "No baskets", "The selected watchlist contains no baskets to simulate.")
             return
         try:
             config, gate = self._configuration()

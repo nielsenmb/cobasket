@@ -102,7 +102,10 @@ class BasketInvestigationDialog(QDialog):
         self._canvas: FigureCanvasQTAgg | None = None
 
         config = PortfolioConfig.load(self.config_path)
-        watchlist = BasketWatchlist.load(config.watchlist_path)
+        watchlist_path = Path(config.watchlist_path)
+        if not watchlist_path.is_absolute():
+            watchlist_path = self.config_path.parent / watchlist_path
+        watchlist = BasketWatchlist.load(watchlist_path)
         self.config = config
         self.baskets = tuple(basket for basket in watchlist.baskets if self.ticker in basket)
         if not self.baskets:
