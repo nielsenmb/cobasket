@@ -58,6 +58,28 @@ def classify_cobasket_json(path: str | Path) -> str:
     raise ValueError("JSON is neither a Cobasket portfolio configuration nor a saved report")
 
 
+def _money(value: float, currency: str | None) -> str:
+    """Format a monetary value with an explicit currency.
+
+    Parameters
+    ----------
+    value
+        Monetary value.
+    currency
+        Three-letter currency code.
+
+    Returns
+    -------
+    str
+        Human-readable monetary value.
+    """
+    code = (currency or "").upper()
+    symbols = {"USD": "$", "GBP": "£", "EUR": "€"}
+    if code in symbols:
+        return f"{symbols[code]}{value:,.2f}"
+    return f"{value:,.2f} {code}".strip()
+
+
 class AnalysisWorker(QObject):
     """Run a fresh portfolio analysis outside the GUI thread."""
 
@@ -284,9 +306,10 @@ class CobasketDashboard(QMainWindow):
     def set_report(self, report: PortfolioReport) -> None:
         """Populate all dashboard widgets from a portfolio report."""
         self.report = report
-        self.total_value_label.setText(f"Total value: ${report.total_value:,.2f}")
-        self.cash_label.setText(f"Cash: ${report.cash:,.2f}")
-        self.invested_label.setText(f"Invested: ${report.invested_value:,.2f}")
+        base_currency = str(report.metadata.get("base_currency") or "")
+        self.total_value_label.setText(f"Total value: {_money(report.total_value, base_currency)}")
+        self.cash_label.setText(f"Cash: {_money(report.cash, base_currency)}")
+        self.invested_label.setText(f"Invested: {_money(report.invested_value, base_currency)}")
         self.price_date_label.setText(f"Latest prices: {report.latest_price_date[:10]}")
 
         self.table.setSortingEnabled(False)
@@ -295,8 +318,8 @@ class CobasketDashboard(QMainWindow):
             values = (
                 item.ticker,
                 f"{item.held_quantity:g}",
-                f"${item.current_price:,.2f}",
-                f"${item.market_value:,.2f}",
+                _money(item.current_price, item.native_currency),
+                _money(item.market_value, item.base_currency or base_currency),
                 probability_label(item),
                 item.recommendation,
                 str(len(item.warnings)),
