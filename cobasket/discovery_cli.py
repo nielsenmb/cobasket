@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import warnings
 
+from cobasket.data.trading212 import filter_trading212_tickers, load_trading212_instruments
 from cobasket.data.universe import get_universe
 from cobasket.discovery import discover_baskets
 from cobasket.evidence import BasketWatchlist
@@ -16,7 +17,28 @@ from cobasket.thresholds import MIN_ACCEPTED_EVALUATIONS
 from cobasket.workflow import PortfolioConfig
 
 
-def _save_watchlist(table, path: Path, top_n: int, universe, *, include_borderline: bool = False) -> int:
+_BUILTIN_UNIVERSES = (
+    "sp1500",
+    "sp500",
+    "sp400",
+    "sp600",
+    "nasdaq100",
+    "ftse350",
+    "ftse100",
+    "ftse250",
+    "eurostoxx50",
+)
+
+
+def _save_watchlist(
+    table,
+    path: Path,
+    top_n: int,
+    universe,
+    *,
+    include_borderline: bool = False,
+    broker_mapping: dict[str, str] | None = None,
+) -> int:
     """Save ranked discovery baskets and attach universe metadata.
 
     Parameters
@@ -31,6 +53,8 @@ def _save_watchlist(table, path: Path, top_n: int, universe, *, include_borderli
         Resolved universe specification.
     include_borderline
         Include ``borderline`` baskets as well as ``promising`` baskets.
+    broker_mapping
+        Optional Yahoo-to-broker ticker mapping for filtered constituents.
 
     Returns
     -------
@@ -58,7 +82,18 @@ def _save_watchlist(table, path: Path, top_n: int, universe, *, include_borderli
         "analysis_currency": universe.analysis_currency,
         "price_scale": universe.price_scale,
         "single_currency": True,
+        "trading212_filtered": bool(broker_mapping),
     }
+    if broker_mapping:
+        selected_tickers = {ticker for basket in baskets for ticker in basket}
+        payload["broker_metadata"] = {
+            "broker": "trading212",
+            "instrument_tickers": {
+                ticker: broker_mapping[ticker]
+                for ticker in sorted(selected_tickers)
+                if ticker in broker_mapping
+            },
+        }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return len(baskets)
 
@@ -145,38 +180,78 @@ def _ensure_portfolio_config(
 def main() -> None:
     """Run persistence-aware discovery for a built-in or custom universe."""
     parser = argparse.ArgumentParser(
-        description="Discover baskets using current cointegration, historical persistence, weight stability, and backtests."
+        description=(
+            "Discover baskets using current cointegration, historical persistence, "
+            "weight stability, and backtests."
+        )
     )
     parser.add_argument(
         "--universe",
         default="sp500",
-        choices=["sp500", "nasdaq100", "ftse100", "eurostoxx50", "custom"],
+        choices=[*_BUILTIN_UNIVERSES, "custom"],
     )
     parser.add_argument("--tickers-file", help="CSV/text ticker list for --universe custom")
     parser.add_argument("--market-ticker", help="Market proxy for --universe custom")
     parser.add_argument("--currency", help="Single quote currency for --universe custom")
-    parser.add_argument("--price-scale", type=float, default=1.0, help="Quote-to-currency scale for custom universe")
+    parser.add_argument(
+        "--price-scale",
+        type=float,
+        default=1.0,
+        help="Quote-to-currency scale for custom universe",
+    )
     parser.add_argument("--period", default="5y")
     parser.add_argument("--distance-threshold", type=float, default=0.8)
     parser.add_argument("--min-trace-stat-ratio", type=float, default=1.0)
     parser.add_argument("--train-window", type=int, default=252)
     parser.add_argument("--horizon", type=int, default=20)
     parser.add_argument("--step", type=int, default=20)
-    parser.add_argument("--min-persistence", type=float, default=0.15, help="Loose persistence floor below which candidates are rejected")
-    parser.add_argument("--min-weight-stability", type=float, default=0.60, help="Loose weight-stability floor below which candidates are rejected")
+    parser.add_argument(
+        "--min-persistence",
+        type=float,
+        default=0.15,
+        help="Loose persistence floor below which candidates are rejected",
+    )
+    parser.add_argument(
+        "--min-weight-stability",
+        type=float,
+        default=0.60,
+        help="Loose weight-stability floor below which candidates are rejected",
+    )
     parser.add_argument("--promising-persistence", type=float, default=0.30)
     parser.add_argument("--promising-evaluations", type=int, default=MIN_ACCEPTED_EVALUATIONS)
     parser.add_argument("--promising-weight-stability", type=float, default=0.80)
-    parser.add_argument("--include-borderline", action="store_true", help="Also export borderline baskets to the watchlist")
+    parser.add_argument(
+        "--include-borderline",
+        action="store_true",
+        help="Also export borderline baskets to the watchlist",
+    )
     parser.add_argument("--cost-bps", type=float, default=10.0)
     parser.add_argument("--top-n", type=int, default=20)
     parser.add_argument("--watchlist-out", default="discovered_watchlist.json")
     parser.add_argument("--table-out", default="discovery_results.csv")
-    parser.add_argument("--portfolio", default="portfolio.json", help="Portfolio config to create in a clean directory")
+    parser.add_argument(
+        "--portfolio",
+        default="portfolio.json",
+        help="Portfolio config to create in a clean directory",
+    )
     parser.add_argument(
         "--update-portfolio",
         action="store_true",
         help="Update an existing portfolio to use the newly discovered watchlist",
+    )
+    parser.add_argument(
+        "--trading212-only",
+        action="store_true",
+        help=(
+            "Restrict discovery to stocks in the account-accessible Trading 212 instrument list; "
+            "requires TRADING212_API_KEY and TRADING212_API_SECRET"
+        ),
+    )
+    parser.add_argument(
+        "--trading212-environment",
+        choices=["live", "demo"],
+        default="live",
+        help="Trading 212 API environment used by --trading212-only",
     )
     parser.add_argument("--force-refresh", action="store_true")
     args = parser.parse_args()
@@ -189,6 +264,29 @@ def main() -> None:
         custom_currency=args.currency,
         custom_price_scale=args.price_scale,
     )
+    broker_mapping: dict[str, str] = {}
+    if args.trading212_only:
+        original_count = len(universe.tickers)
+        instruments = load_trading212_instruments(
+            force_refresh=args.force_refresh,
+            environment=args.trading212_environment,
+        )
+        filtered, broker_mapping = filter_trading212_tickers(
+            universe.tickers,
+            analysis_currency=universe.analysis_currency,
+            instruments=instruments,
+        )
+        if len(filtered) < 2:
+            raise ValueError(
+                "Trading 212 filtering left fewer than two constituents; check account/API access "
+                "and symbol matching before running discovery."
+            )
+        universe = replace(universe, tickers=filtered)
+        print(
+            f"Trading 212 filter retained {len(filtered)} of {original_count} "
+            f"{universe.name} constituents."
+        )
+
     print(
         f"Discovering baskets across {len(universe.tickers)} {universe.name} tickers "
         f"({universe.analysis_currency}; market proxy {universe.market_ticker})..."
@@ -234,6 +332,7 @@ def main() -> None:
         args.top_n,
         universe,
         include_borderline=args.include_borderline,
+        broker_mapping=broker_mapping,
     )
     print(f"\nSaved detailed discovery table to {table_path}")
     if count:

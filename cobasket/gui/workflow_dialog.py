@@ -8,6 +8,7 @@ import sys
 
 from PyQt6.QtCore import QProcess, pyqtSignal
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -34,7 +35,13 @@ _STAGE_LABELS = {
 }
 
 
-def workflow_command(stage: str, *, universe: str, period: str) -> tuple[str, ...]:
+def workflow_command(
+    stage: str,
+    *,
+    universe: str,
+    period: str,
+    trading212_only: bool = False,
+) -> tuple[str, ...]:
     """Build one Cobasket workflow command for execution in a workspace.
 
     Parameters
@@ -45,6 +52,8 @@ def workflow_command(stage: str, *, universe: str, period: str) -> tuple[str, ..
         Built-in discovery universe.
     period
         Historical price period passed to discovery.
+    trading212_only
+        Add the account-accessible Trading 212 stock filter to discovery.
 
     Returns
     -------
@@ -102,9 +111,12 @@ def workflow_command(stage: str, *, universe: str, period: str) -> tuple[str, ..
         ),
     }
     try:
-        return commands[stage]
+        command = commands[stage]
     except KeyError as exc:
         raise ValueError(f"unknown workflow stage: {stage}") from exc
+    if stage == "discover" and trading212_only:
+        command = (*command, "--trading212-only")
+    return command
 
 
 class WorkflowDialog(QDialog):
@@ -146,11 +158,30 @@ class WorkflowDialog(QDialog):
         form.addRow("Workspace", workspace_row)
 
         self.universe_combo = QComboBox()
-        self.universe_combo.addItems(("sp500", "nasdaq100", "ftse100", "eurostoxx50"))
+        self.universe_combo.addItems(
+            (
+                "sp1500",
+                "sp500",
+                "sp400",
+                "sp600",
+                "nasdaq100",
+                "ftse350",
+                "ftse100",
+                "ftse250",
+                "eurostoxx50",
+            )
+        )
+        self.universe_combo.setCurrentText("sp500")
         form.addRow("Discovery universe", self.universe_combo)
         self.period_combo = QComboBox()
         self.period_combo.addItems(("5y", "2y", "10y"))
         form.addRow("Discovery period", self.period_combo)
+        self.trading212_checkbox = QCheckBox("Only stocks available in my Trading 212 account")
+        self.trading212_checkbox.setToolTip(
+            "Uses the Trading 212 accessible-instruments API. Set TRADING212_API_KEY and "
+            "TRADING212_API_SECRET in the environment before launching Cobasket."
+        )
+        form.addRow("Broker filter", self.trading212_checkbox)
         outer.addLayout(form)
 
         state_box = QGroupBox("Workspace status")
@@ -293,6 +324,7 @@ class WorkflowDialog(QDialog):
             stage,
             universe=self.universe_combo.currentText(),
             period=self.period_combo.currentText(),
+            trading212_only=self.trading212_checkbox.isChecked(),
         )
         process = QProcess(self)
         process.setWorkingDirectory(str(self.workspace()))
@@ -353,6 +385,7 @@ class WorkflowDialog(QDialog):
         self.workspace_edit.setEnabled(not running)
         self.universe_combo.setEnabled(not running)
         self.period_combo.setEnabled(not running)
+        self.trading212_checkbox.setEnabled(not running)
         if not running:
             self._refresh_status()
 

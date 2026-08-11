@@ -246,7 +246,9 @@ class ConfigEditorDialog(QDialog):
                 watchlist_path = self.config_path.parent / watchlist_path
             watchlist = BasketWatchlist.load(watchlist_path)
             payload = json.loads(watchlist_path.read_text(encoding="utf-8"))
-            self._watchlist_metadata = dict(payload.get("universe_metadata") or {})
+            self._watchlist_metadata = {
+                key: value for key, value in payload.items() if key not in {"name", "baskets"}
+            }
         except Exception as exc:
             QMessageBox.critical(self, "Configuration error", f"Could not load configuration:\n{exc}")
             return
@@ -320,7 +322,7 @@ class ConfigEditorDialog(QDialog):
             watchlist.save(watchlist_path)
             if self._watchlist_metadata:
                 payload = json.loads(watchlist_path.read_text(encoding="utf-8"))
-                payload["universe_metadata"] = self._watchlist_metadata
+                payload.update(self._watchlist_metadata)
                 watchlist_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
             config.save(self.config_path)
         except Exception as exc:

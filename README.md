@@ -60,7 +60,39 @@ cobasket-discover \
     --table-out discovery_results.csv
 ```
 
-Built-in universes include `sp500`, `nasdaq100`, `ftse100`, and `eurostoxx50`. Discovery classifies surviving candidates as `promising`, `borderline`, or `reject`; only promising baskets are exported by default.
+Built-in single-currency universes are:
+
+- `sp1500`: S&P Composite 1500 (large, mid and small-cap US stocks)
+- `sp500`: S&P 500
+- `sp400`: S&P MidCap 400
+- `sp600`: S&P SmallCap 600
+- `nasdaq100`: Nasdaq-100
+- `ftse350`: FTSE 350 (FTSE 100 + FTSE 250)
+- `ftse100`: FTSE 100
+- `ftse250`: FTSE 250
+- `eurostoxx50`: EURO STOXX 50
+
+For broad searches, `sp1500` and `ftse350` provide substantially more candidate relationships than the headline large-cap indices. Discovery classifies surviving candidates as `promising`, `borderline`, or `reject`; only promising baskets are exported by default.
+
+### Trading 212 availability filter
+
+Discovery can optionally restrict the universe to stocks exposed by the Trading 212 accessible-instruments API for your account:
+
+```bash
+export TRADING212_API_KEY="..."
+export TRADING212_API_SECRET="..."
+
+cobasket-discover \
+    --universe ftse350 \
+    --period 5y \
+    --trading212-only
+```
+
+The GUI exposes the same option as **Only stocks available in my Trading 212 account**. Cobasket queries only instrument metadata; it does not place orders. The broker response is cached locally because the metadata endpoint is rate limited. When the filter is enabled, generated watchlists record the matching Trading 212 instrument identifiers for the selected basket members.
+
+Trading 212 availability can vary by account and jurisdiction, so the broker filter is preferable to maintaining a hard-coded support list.
+
+A raw STOXX Europe 600 universe is not currently exposed as a built-in discovery universe because its constituents trade in several currencies. Combining those local-price series without first converting them to a common currency would allow FX movements to contaminate the cointegration signal. Broad pan-European discovery should therefore add historical FX normalization first rather than silently treating the market as single-currency.
 
 Lower-level residual-correlation and PCA screens remain available through `cobasket-screen` and `cobasket-pca-screen` for research and diagnostics.
 
@@ -196,4 +228,5 @@ See [`notebooks/README.md`](notebooks/README.md) for the current notebook sequen
 - Cointegration relationships and market regimes can break down.
 - Adjusted closing prices do not reproduce intraday execution, bid-ask spreads, taxes, or all broker-specific costs.
 - Yahoo Finance downloads can be incomplete or rate-limited; inspect data-quality warnings before interpreting results.
+- Trading 212 instrument metadata indicates account-accessible symbols at query time; it does not guarantee future availability or execution.
 - Cobasket currently supports research and manual decision support rather than automatic brokerage execution.

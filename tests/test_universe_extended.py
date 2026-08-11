@@ -40,6 +40,34 @@ def test_ftse100_upgrades_stale_cached_dotted_symbol(tmp_path):
     assert pd.read_csv(cache)["ticker"].tolist() == ["AZN.L", "BT-A.L"]
 
 
+def test_ftse250_extracts_epic_from_share_label(monkeypatch, tmp_path):
+    """FTSE 250 share labels should expose the EPIC code used by Yahoo."""
+    monkeypatch.setattr(
+        universe_module,
+        "_download_tables",
+        lambda url, label: [
+            pd.DataFrame({"Share": ["3i Infrastructure (3IN)", "Ao World (AO.)"]})
+        ],
+    )
+    tickers = universe_module.get_ftse250_tickers(tmp_path, force_refresh=True)
+    assert tickers == ["3IN.L", "AO.L"]
+
+
+def test_ftse350_combines_large_and_mid_cap_constituents(monkeypatch, tmp_path):
+    """FTSE 350 should de-duplicate the FTSE 100 and FTSE 250 component lists."""
+    monkeypatch.setattr(universe_module, "get_ftse100_tickers", lambda *args, **kwargs: ["AZN.L", "SHEL.L"])
+    monkeypatch.setattr(universe_module, "get_ftse250_tickers", lambda *args, **kwargs: ["SHEL.L", "ABDN.L"])
+    assert universe_module.get_ftse350_tickers(tmp_path) == ["AZN.L", "SHEL.L", "ABDN.L"]
+
+
+def test_sp1500_combines_large_mid_and_small_cap_constituents(monkeypatch, tmp_path):
+    """S&P Composite 1500 should be the de-duplicated 500/400/600 union."""
+    monkeypatch.setattr(universe_module, "get_sp500_tickers", lambda *args, **kwargs: ["AAPL", "MSFT"])
+    monkeypatch.setattr(universe_module, "get_sp400_tickers", lambda *args, **kwargs: ["MSFT", "AA"])
+    monkeypatch.setattr(universe_module, "get_sp600_tickers", lambda *args, **kwargs: ["AA", "ABM"])
+    assert universe_module.get_sp1500_tickers(tmp_path) == ["AAPL", "MSFT", "AA", "ABM"]
+
+
 def test_eurostoxx_preserves_exchange_suffixes(monkeypatch, tmp_path):
     """EURO STOXX symbols already carrying Yahoo exchange suffixes are preserved."""
     monkeypatch.setattr(
@@ -54,11 +82,17 @@ def test_eurostoxx_preserves_exchange_suffixes(monkeypatch, tmp_path):
 def test_builtin_universe_currency_conventions(monkeypatch, tmp_path):
     """Built-in markets should expose explicit analysis currencies and price scales."""
     monkeypatch.setattr(universe_module, "get_ftse100_tickers", lambda *args, **kwargs: ["AZN.L"])
+    monkeypatch.setattr(universe_module, "get_ftse350_tickers", lambda *args, **kwargs: ["AZN.L", "ABDN.L"])
     monkeypatch.setattr(universe_module, "get_sp500_tickers", lambda *args, **kwargs: ["AAPL"])
+    monkeypatch.setattr(universe_module, "get_sp1500_tickers", lambda *args, **kwargs: ["AAPL", "AA"])
     uk = universe_module.get_universe("ftse100", cache_dir=tmp_path)
+    uk_broad = universe_module.get_universe("ftse350", cache_dir=tmp_path)
     us = universe_module.get_universe("sp500", cache_dir=tmp_path)
+    us_broad = universe_module.get_universe("sp1500", cache_dir=tmp_path)
     assert (uk.quote_currency, uk.analysis_currency, uk.price_scale) == ("GBp", "GBP", 0.01)
+    assert (uk_broad.market_ticker, uk_broad.analysis_currency) == ("^FTLC", "GBP")
     assert (us.quote_currency, us.analysis_currency, us.price_scale) == ("USD", "USD", 1.0)
+    assert (us_broad.market_ticker, us_broad.analysis_currency) == ("^SP1500", "USD")
 
 
 def test_custom_universe_requires_currency_and_market_proxy(tmp_path):
