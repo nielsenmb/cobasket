@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 
@@ -50,6 +51,65 @@ def _mtime(path: Path) -> float:
     return path.stat().st_mtime
 
 
+def _resolve_path(root: Path, value: object, fallback: str) -> Path:
+    """Resolve a configured artifact path relative to its workspace.
+
+    Parameters
+    ----------
+    root
+        Workspace directory containing ``portfolio.json``.
+    value
+        Configured path value, which may be missing or ``None``.
+    fallback
+        Standard workflow filename used when no path is configured.
+
+    Returns
+    -------
+    pathlib.Path
+        Resolved artifact path.
+    """
+    if not value:
+        return root / fallback
+    path = Path(str(value)).expanduser()
+    return path.resolve() if path.is_absolute() else (root / path).resolve()
+
+
+def _workspace_paths(root: Path) -> dict[str, Path]:
+    """Return workflow artifact paths, following portfolio configuration when possible.
+
+    Parameters
+    ----------
+    root
+        Workspace directory.
+
+    Returns
+    -------
+    dict of str to pathlib.Path
+        Paths for portfolio, watchlist, validation, calibration, discovery table,
+        and report.
+    """
+    portfolio = root / "portfolio.json"
+    payload: dict[str, object] = {}
+    if portfolio.exists():
+        try:
+            loaded = json.loads(portfolio.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                payload = loaded
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+
+    return {
+        "portfolio": portfolio,
+        "watchlist": _resolve_path(root, payload.get("watchlist_path"), "discovered_watchlist.json"),
+        "validation": _resolve_path(root, payload.get("validation_path"), "basket_validation.json"),
+        "calibration": _resolve_path(
+            root, payload.get("basket_calibration_path"), "basket_calibration.json"
+        ),
+        "discovery": root / "discovery_results.csv",
+        "report": root / "report.json",
+    }
+
+
 def inspect_workspace(workspace: str | Path) -> WorkspaceState:
     """Determine the current guided-workflow state of a workspace.
 
@@ -65,18 +125,21 @@ def inspect_workspace(workspace: str | Path) -> WorkspaceState:
 
     Notes
     -----
-    Validation is considered stale when the discovered watchlist is newer than
-    the validation file. Calibration is stale when validation is newer than the
-    calibration file. A report is stale when the portfolio, watchlist,
-    validation, or calibration changed after the report was written.
+    Existing workspaces are inspected using the artifact paths stored in
+    ``portfolio.json`` rather than assuming the newest default filenames.
+    Validation is considered stale when the configured watchlist is newer than
+    validation. Calibration is stale when validation is newer than calibration.
+    A report is stale when the portfolio or any upstream model artifact changed
+    after the report was written.
     """
     root = Path(workspace).expanduser().resolve()
-    portfolio = root / "portfolio.json"
-    watchlist = root / "discovered_watchlist.json"
-    discovery = root / "discovery_results.csv"
-    validation = root / "basket_validation.json"
-    calibration = root / "basket_calibration.json"
-    report = root / "report.json"
+    paths = _workspace_paths(root)
+    portfolio = paths["portfolio"]
+    watchlist = paths["watchlist"]
+    discovery = paths["discovery"]
+    validation = paths["validation"]
+    calibration = paths["calibration"]
+    report = paths["report"]
 
     has_portfolio = portfolio.exists()
     has_watchlist = watchlist.exists()
@@ -90,7 +153,7 @@ def inspect_workspace(workspace: str | Path) -> WorkspaceState:
             "Discovery has run, but no promising basket produced a usable workspace. "
             "Try discovery again, possibly with another universe or period."
             if discovery.exists()
-            else "This is an empty workspace. Start by discovering persistent candidate baskets."
+            else "This is an empty or incomplete workspace. Start by discovering persistent candidate baskets."
         )
         return WorkspaceState(
             name="empty" if not discovery.exists() else "no_candidates",
