@@ -12,7 +12,7 @@ from cobasket.workflow import PortfolioReport
 
 from .config_editor import ConfigEditorDialog
 from .continuous_walk_forward_dialog import ContinuousWalkForwardDialog
-from .dashboard import CobasketDashboard
+from .dashboard import CobasketDashboard, classify_cobasket_json
 from .history_dialog import RecommendationHistoryDialog
 from .investigation_dialog import BasketInvestigationDialog
 from .repeated_walk_forward_dialog import RepeatedWalkForwardDialog
@@ -60,9 +60,17 @@ class EditableCobasketDashboard(CobasketDashboard):
         self._validation_dialog: ValidationDialog | None = None
 
     def _configuration_path(self) -> Path | None:
-        """Return the selected configuration path when it exists."""
-        path = Path(self.path_edit.text().strip())
-        return path if path.exists() else None
+        """Return the selected portfolio configuration path when valid."""
+        text = self.path_edit.text().strip()
+        if not text:
+            return None
+        path = Path(text)
+        if not path.exists():
+            return None
+        try:
+            return path if classify_cobasket_json(path) == "portfolio" else None
+        except Exception:
+            return None
 
     def _history_path(self) -> Path:
         """Return the history database beside the selected configuration file."""
@@ -80,6 +88,18 @@ class EditableCobasketDashboard(CobasketDashboard):
             source_row = selected[0].row()
         return self.report.tickers[int(source_row)].ticker
 
+    def _require_configuration(self, action: str) -> Path | None:
+        """Return a valid configuration path or display an actionable warning."""
+        path = self._configuration_path()
+        if path is not None:
+            return path
+        QMessageBox.warning(
+            self,
+            "Portfolio configuration required",
+            f"{action} requires a portfolio configuration JSON file. Choose portfolio.json in the Portfolio configuration row first.",
+        )
+        return None
+
     def _analysis_finished(self, report: PortfolioReport) -> None:
         """Display and persist a successfully generated live report."""
         super()._analysis_finished(report)
@@ -94,13 +114,8 @@ class EditableCobasketDashboard(CobasketDashboard):
 
     def edit_configuration(self) -> None:
         """Open the current portfolio configuration in the editor."""
-        path = self._configuration_path()
+        path = self._require_configuration("Editing the portfolio and watchlist")
         if path is None:
-            QMessageBox.warning(
-                self,
-                "Missing configuration",
-                "Choose an existing portfolio configuration JSON file first.",
-            )
             return
         dialog = ConfigEditorDialog(path, self)
         if dialog.exec():
@@ -110,13 +125,8 @@ class EditableCobasketDashboard(CobasketDashboard):
 
     def investigate_selected_ticker(self) -> None:
         """Open diagnostic plots for the currently selected ticker and its baskets."""
-        config_path = self._configuration_path()
+        config_path = self._require_configuration("Ticker investigation")
         if config_path is None:
-            QMessageBox.warning(
-                self,
-                "Missing configuration",
-                "Choose an existing portfolio configuration JSON file first.",
-            )
             return
         ticker = self._selected_ticker()
         if ticker is None:
@@ -133,24 +143,21 @@ class EditableCobasketDashboard(CobasketDashboard):
 
     def open_recommendation_history(self) -> None:
         """Open the stored model, action, and outcome history timeline."""
-        dialog = RecommendationHistoryDialog(
-            self._history_path(),
-            ticker=self._selected_ticker(),
-            parent=self,
-        )
+        try:
+            dialog = RecommendationHistoryDialog(
+                self._history_path(), ticker=self._selected_ticker(), parent=self
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Cannot open recommendation history", str(exc))
+            return
         self._history_dialog = dialog
         dialog.finished.connect(lambda _: setattr(self, "_history_dialog", None))
         dialog.show()
 
     def open_strategy_simulation(self) -> None:
         """Open the end-to-end historical basket strategy simulator."""
-        config_path = self._configuration_path()
+        config_path = self._require_configuration("Basket strategy simulation")
         if config_path is None:
-            QMessageBox.warning(
-                self,
-                "Missing configuration",
-                "Choose an existing portfolio configuration JSON file first.",
-            )
             return
         try:
             dialog = StrategySimulationDialog(config_path, self)
