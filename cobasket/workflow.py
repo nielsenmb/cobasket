@@ -27,17 +27,17 @@ class PortfolioConfig:
     Parameters
     ----------
     holdings
-        Mapping from ticker symbol to the currently owned quantity. A zero
-        quantity keeps a ticker available for re-entry when it remains in the
-        watchlist.
+        Mapping from ticker symbol to currently owned quantity.
     cash
-        Uninvested cash recorded for portfolio context. The reporting stage does
-        not place trades or allocate this cash.
+        Uninvested cash recorded for portfolio context.
     watchlist_path
-        JSON file containing a :class:`~cobasket.evidence.BasketWatchlist`.
+        JSON file containing a monitored basket watchlist.
     calibration_path
-        Optional JSON file containing a fitted
-        :class:`~cobasket.evidence.ProbabilityCalibration`.
+        Optional global probability-calibration JSON.
+    validation_path
+        Optional basket-validation-profile JSON. When supplied, live actions are
+        gated so baskets that are not historically validated cannot generate a
+        positive or reducing recommendation by themselves.
     period
         Historical period requested from the data provider.
     z_window
@@ -52,6 +52,7 @@ class PortfolioConfig:
     cash: float = 0.0
     watchlist_path: str = "portfolio_watchlist.json"
     calibration_path: str | None = None
+    validation_path: str | None = None
     period: str = "3y"
     z_window: int = 60
     min_trace_ratio: float = 1.0
@@ -108,6 +109,7 @@ class TickerReport:
     recommendation: str
     explanation: str
     basket_memberships: tuple[tuple[str, ...], ...]
+    basket_validation: tuple[dict[str, str], ...] = ()
     warnings: tuple[str, ...] = ()
 
 
@@ -142,6 +144,9 @@ class PortfolioReport:
         for item in self.tickers:
             row = asdict(item)
             row["basket_memberships"] = [", ".join(basket) for basket in item.basket_memberships]
+            row["basket_validation"] = [
+                f"{entry['basket']}: {entry['status']}" for entry in item.basket_validation
+            ]
             row["warnings"] = list(item.warnings)
             rows.append(row)
         table = pd.DataFrame(rows)
@@ -186,6 +191,14 @@ class PortfolioAnalyzer:
             if config.calibration_path is not None
             else None
         )
+        validation = None
+        validation_by_key: dict[str, Any] = {}
+        if config.validation_path is not None:
+            from cobasket.basket_validation import BasketValidationSet
+
+            validation = BasketValidationSet.load(config.validation_path)
+            validation_by_key = validation.by_key()
+
         prices = self.data_manager.prices(
             watchlist.tickers,
             period=config.period,
@@ -229,6 +242,10 @@ class PortfolioAnalyzer:
             global_warnings.append(
                 "No probability calibration was supplied; recommendations use raw evidence thresholds."
             )
+        if validation is None:
+            global_warnings.append(
+                "No basket validation profile was supplied; live recommendations are not reliability-gated."
+            )
 
         ticker_reports: list[TickerReport] = []
         for ticker in watchlist.tickers:
@@ -241,6 +258,25 @@ class PortfolioAnalyzer:
             warnings: list[str] = []
             if len(memberships) == 1:
                 warnings.append("Recommendation is supported by only one watchlist basket.")
+
+            validation_entries: list[dict[str, str]] = []
+            validated_memberships = 0
+            if validation is not None:
+                for basket in memberships:
+                    key = ", ".join(basket)
+                    profile = validation_by_key.get(key)
+                    status = profile.status if profile is not None else "missing"
+                    validation_entries.append({"basket": key, "status": status})
+                    if status == "validated":
+                        validated_memberships += 1
+                if not validation_entries:
+                    warnings.append("Ticker has no matching basket validation profile.")
+                elif validated_memberships == 0:
+                    statuses = sorted({entry["status"] for entry in validation_entries})
+                    warnings.append(
+                        "No supporting basket is historically validated "
+                        f"(statuses: {', '.join(statuses)})."
+                    )
 
             calibrated = calibrated_evidence.get(ticker)
             calibrated_recommendation = calibrated_by_ticker.get(ticker)
@@ -265,6 +301,16 @@ class PortfolioAnalyzer:
                 explanation = raw.explanation
                 warnings.append("Ticker has no calibrated probability.")
 
+            if validation is not None and validated_memberships == 0:
+                gated_action = "Hold" if held_quantity > 0.0 else "Wait"
+                explanation = (
+                    f"{gated_action}: current statistical evidence is not used for an actionable "
+                    "recommendation because none of this ticker's supporting baskets currently has "
+                    "validated historical reliability. "
+                    + explanation
+                )
+                recommendation = gated_action
+
             ticker_reports.append(
                 TickerReport(
                     ticker=ticker,
@@ -280,6 +326,7 @@ class PortfolioAnalyzer:
                     recommendation=recommendation,
                     explanation=explanation,
                     basket_memberships=memberships,
+                    basket_validation=tuple(validation_entries),
                     warnings=tuple(warnings),
                 )
             )
@@ -293,7 +340,15 @@ class PortfolioAnalyzer:
             reverse=True,
         )
         invested_value = float(sum(item.market_value for item in ticker_reports))
-        diagnostics = tuple(evaluation.basket_diagnostics.to_dict(orient="records"))
+        diagnostics = evaluation.basket_diagnostics.copy()
+        if validation is not None and not diagnostics.empty:
+            diagnostics["basket_key"] = diagnostics["basket"].apply(
+                lambda value: ", ".join(value) if isinstance(value, (list, tuple)) else str(value)
+            )
+            diagnostics["validation_status"] = diagnostics["basket_key"].map(
+                lambda key: validation_by_key[key].status if key in validation_by_key else "missing"
+            )
+            diagnostics = diagnostics.drop(columns=["basket_key"])
         metadata: dict[str, Any] = {
             "watchlist_name": watchlist.name,
             "period": config.period,
@@ -301,7 +356,10 @@ class PortfolioAnalyzer:
             "min_trace_ratio": config.min_trace_ratio,
             "price_age_days": price_age_days,
             "calibrated": calibration is not None,
+            "validation_gated": validation is not None,
         }
+        if validation is not None:
+            metadata["validation_generated_at_utc"] = validation.generated_at_utc
         if getattr(self.data_manager, "last_metadata", None) is not None:
             metadata["data"] = asdict(self.data_manager.last_metadata)
 
@@ -312,7 +370,7 @@ class PortfolioAnalyzer:
             invested_value=invested_value,
             total_value=float(config.cash + invested_value),
             tickers=tuple(ticker_reports),
-            basket_diagnostics=diagnostics,
+            basket_diagnostics=tuple(diagnostics.to_dict(orient="records")),
             warnings=tuple(global_warnings),
             metadata=metadata,
         )

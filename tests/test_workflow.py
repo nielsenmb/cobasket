@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from cobasket.basket_validation import BasketValidationProfile, BasketValidationSet
 from cobasket.evidence import BasketWatchlist, ProbabilityCalibration
 from cobasket.workflow import PortfolioAnalyzer, PortfolioConfig
 
@@ -56,17 +57,47 @@ def _calibration() -> ProbabilityCalibration:
     return ProbabilityCalibration(table=table, score_edges=(-1.0, 0.0, 1.0), horizon=20)
 
 
+def _validation(status: str) -> BasketValidationSet:
+    """Create one deterministic basket validation profile."""
+    profile = BasketValidationProfile(
+        basket=("AAA", "BBB"),
+        status=status,
+        current_trace_ratio=1.2,
+        accepted_evaluations=30,
+        possible_evaluations=40,
+        acceptance_rate=0.75,
+        weight_stability=0.9,
+        score_return_correlation=0.2 if status == "validated" else -0.1,
+        positive_outperform_rate=0.7 if status == "validated" else 0.4,
+        negative_outperform_rate=0.4 if status == "validated" else 0.6,
+        calibration_contrast=0.3 if status == "validated" else -0.2,
+        records=60,
+        reasons=("test profile",),
+    )
+    return BasketValidationSet(
+        generated_at_utc="2026-08-11T12:00:00+00:00",
+        train_window=252,
+        z_window=30,
+        horizon=20,
+        step=20,
+        min_trace_ratio=0.01,
+        profiles=(profile,),
+    )
+
+
 def test_portfolio_config_round_trip(tmp_path):
     """Portfolio configuration should preserve normalized holdings."""
     config = PortfolioConfig(
         holdings={"aaa": 2.5, "bbb": 0.0},
         cash=500.0,
         watchlist_path="watchlist.json",
+        validation_path="validation.json",
     )
     path = config.save(tmp_path / "portfolio.json")
     loaded = PortfolioConfig.load(path)
     assert loaded.holdings == {"AAA": 2.5, "BBB": 0.0}
     assert loaded.cash == 500.0
+    assert loaded.validation_path == "validation.json"
 
 
 def test_probability_calibration_round_trip(tmp_path):
@@ -131,3 +162,27 @@ def test_missing_calibration_emits_warning(tmp_path):
     report = PortfolioAnalyzer(_FakeDataManager(_prices())).run(config)
     assert any("No probability calibration" in warning for warning in report.warnings)
     assert all(item.probability_outperform is None for item in report.tickers)
+
+
+def test_weak_validation_profile_gates_live_actions(tmp_path):
+    """A weak basket should retain diagnostics but suppress actionable labels."""
+    watchlist_path = BasketWatchlist(baskets=(("AAA", "BBB"),)).save(
+        tmp_path / "watchlist.json"
+    )
+    calibration_path = _calibration().save(tmp_path / "calibration.json")
+    validation_path = _validation("weak").save(tmp_path / "validation.json")
+    config = PortfolioConfig(
+        holdings={"AAA": 0.0, "BBB": 1.0},
+        watchlist_path=str(watchlist_path),
+        calibration_path=str(calibration_path),
+        validation_path=str(validation_path),
+        z_window=30,
+        min_trace_ratio=0.01,
+    )
+    report = PortfolioAnalyzer(_FakeDataManager(_prices())).run(config)
+    for item in report.tickers:
+        expected = "Hold" if item.held_quantity > 0 else "Wait"
+        assert item.recommendation == expected
+        assert item.probability_outperform is not None
+        assert item.basket_validation[0]["status"] == "weak"
+        assert any("No supporting basket" in warning for warning in item.warnings)

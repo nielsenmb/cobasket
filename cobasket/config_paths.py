@@ -24,8 +24,7 @@ def resolve_portfolio_config_paths(
     Returns
     -------
     PortfolioConfig
-        Equivalent immutable configuration with absolute watchlist and optional
-        calibration paths.
+        Equivalent immutable configuration with absolute persistent-data paths.
     """
     base = Path(config_path).expanduser().resolve().parent
 
@@ -37,4 +36,5 @@ def resolve_portfolio_config_paths(
         config,
         watchlist_path=resolve(config.watchlist_path),
         calibration_path=resolve(config.calibration_path) if config.calibration_path else None,
+        validation_path=resolve(config.validation_path) if config.validation_path else None,
     )
