@@ -18,6 +18,17 @@ def test_ftse100_adds_yahoo_london_suffix(monkeypatch, tmp_path):
     assert tickers == ["AZN.L", "BARC.L", "SHEL.L"]
 
 
+def test_ftse100_converts_dotted_share_class(monkeypatch, tmp_path):
+    """LSE dotted symbols should use Yahoo's hyphenated class notation."""
+    monkeypatch.setattr(
+        universe_module,
+        "_download_tables",
+        lambda url, label: [pd.DataFrame({"Ticker": ["BT.A"]})],
+    )
+    tickers = universe_module.get_ftse100_tickers(tmp_path, force_refresh=True)
+    assert tickers == ["BT-A.L"]
+
+
 def test_eurostoxx_preserves_exchange_suffixes(monkeypatch, tmp_path):
     """EURO STOXX symbols already carrying Yahoo exchange suffixes are preserved."""
     monkeypatch.setattr(
