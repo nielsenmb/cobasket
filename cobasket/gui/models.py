@@ -29,24 +29,16 @@ def portfolio_report_from_dict(payload: Mapping[str, Any]) -> PortfolioReport:
             evidence_score=float(item["evidence_score"]),
             evidence_confidence=float(item["evidence_confidence"]),
             probability_outperform=(
-                None
-                if item.get("probability_outperform") is None
-                else float(item["probability_outperform"])
+                None if item.get("probability_outperform") is None else float(item["probability_outperform"])
             ),
             probability_lower=(
-                None
-                if item.get("probability_lower") is None
-                else float(item["probability_lower"])
+                None if item.get("probability_lower") is None else float(item["probability_lower"])
             ),
             probability_upper=(
-                None
-                if item.get("probability_upper") is None
-                else float(item["probability_upper"])
+                None if item.get("probability_upper") is None else float(item["probability_upper"])
             ),
             calibration_sample_count=(
-                None
-                if item.get("calibration_sample_count") is None
-                else int(item["calibration_sample_count"])
+                None if item.get("calibration_sample_count") is None else int(item["calibration_sample_count"])
             ),
             recommendation=str(item["recommendation"]),
             explanation=str(item["explanation"]),
@@ -54,6 +46,15 @@ def portfolio_report_from_dict(payload: Mapping[str, Any]) -> PortfolioReport:
                 tuple(str(ticker) for ticker in basket)
                 for basket in item.get("basket_memberships", ())
             ),
+            native_currency=(
+                None if item.get("native_currency") is None else str(item["native_currency"])
+            ),
+            base_currency=(
+                None if item.get("base_currency") is None else str(item["base_currency"])
+            ),
+            fx_rate_to_base=float(item.get("fx_rate_to_base", 1.0)),
+            basket_validation=tuple(dict(entry) for entry in item.get("basket_validation", ())),
+            probability_sources=tuple(str(source) for source in item.get("probability_sources", ())),
             warnings=tuple(str(warning) for warning in item.get("warnings", ())),
         )
         for item in payload.get("tickers", ())
