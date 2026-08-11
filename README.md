@@ -143,6 +143,17 @@ Complete workspace
 
 The workspace window shows the status of Discovery, Validation, Calibration, and Live report. **Next step** runs only the recommended stage. **Update required stages to report** runs all missing or stale downstream stages in order. Re-running discovery is deliberately separate because it can replace the watchlist and invalidate validation/calibration for the previous baskets.
 
+Cobasket also applies age-based freshness recommendations. The defaults are:
+
+```text
+Live report       3 days
+Validation       90 days
+Calibration      90 days
+Discovery       180 days
+```
+
+A report or model artifact older than its configured interval is marked for refresh even when no upstream file has changed. An old discovery is advisory rather than automatic: Cobasket warns that the basket universe should be reconsidered but does not silently replace the current watchlist. Use **Freshness settings…** in the workspace window to change these intervals. Settings are stored in `workspace_freshness.json` inside the workspace and do not alter the statistical models themselves.
+
 Manual `portfolio.json` and `report.json` controls are hidden by default but can be enabled from **Workspace → Show manual file controls**.
 
 The **Portfolio** menu contains everyday portfolio actions such as editing holdings, ticker investigation, and recommendation history. Historical simulations, strategy experiments, repeated walk-forward tests, continuous deployment, and policy validation are under **Research** so they are not confused with the normal recommendation workflow.

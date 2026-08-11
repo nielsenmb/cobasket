@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .freshness_dialog import FreshnessDialog
 from .workspace_state import WorkspaceState, inspect_workspace
 
 
@@ -173,10 +174,12 @@ class WorkflowDialog(QDialog):
         self.open_portfolio_button = QPushButton("Edit holdings / portfolio…")
         self.rediscover_button = QPushButton("Re-run discovery…")
         self.load_report_button = QPushButton("Show current report")
+        self.freshness_button = QPushButton("Freshness settings…")
         close_button = QPushButton("Close")
         secondary_row.addWidget(self.open_portfolio_button)
         secondary_row.addWidget(self.rediscover_button)
         secondary_row.addWidget(self.load_report_button)
+        secondary_row.addWidget(self.freshness_button)
         secondary_row.addStretch(1)
         secondary_row.addWidget(close_button)
         outer.addLayout(secondary_row)
@@ -196,6 +199,7 @@ class WorkflowDialog(QDialog):
         self.rediscover_button.clicked.connect(self._confirm_rediscovery)
         self.open_portfolio_button.clicked.connect(self._edit_portfolio)
         self.load_report_button.clicked.connect(self._emit_report)
+        self.freshness_button.clicked.connect(self._edit_freshness)
         close_button.clicked.connect(self.reject)
 
     def workspace(self) -> Path:
@@ -232,6 +236,12 @@ class WorkflowDialog(QDialog):
             if answer != QMessageBox.StandardButton.Yes:
                 return
         self._start_sequence(("discover",))
+
+    def _edit_freshness(self) -> None:
+        """Edit persistent age-based refresh recommendations for the workspace."""
+        dialog = FreshnessDialog(self.workspace(), self)
+        if dialog.exec():
+            self._refresh_status()
 
     def _start_sequence(self, stages: tuple[str, ...]) -> None:
         """Queue one or more workflow stages."""
@@ -337,6 +347,7 @@ class WorkflowDialog(QDialog):
             self.rediscover_button,
             self.open_portfolio_button,
             self.load_report_button,
+            self.freshness_button,
         ):
             button.setEnabled(not running)
         self.workspace_edit.setEnabled(not running)
@@ -369,6 +380,7 @@ class WorkflowDialog(QDialog):
         self.open_portfolio_button.setEnabled(has_portfolio and idle)
         self.load_report_button.setVisible(has_report)
         self.load_report_button.setEnabled(has_report and idle)
+        self.freshness_button.setEnabled(idle)
 
     def _edit_portfolio(self) -> None:
         """Open the generated portfolio in the existing configuration editor."""
