@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from cobasket.basket_calibration import BasketCalibrationSet, BasketProbabilityCalibration
 from cobasket.basket_validation import BasketValidationProfile, BasketValidationSet
 from cobasket.evidence import BasketWatchlist, ProbabilityCalibration
 from cobasket.workflow import PortfolioAnalyzer, PortfolioConfig
@@ -85,19 +86,37 @@ def _validation(status: str) -> BasketValidationSet:
     )
 
 
+def _basket_calibration() -> BasketCalibrationSet:
+    """Create one deterministic basket-specific calibration."""
+    return BasketCalibrationSet(
+        generated_at_utc="2026-08-11T12:00:00+00:00",
+        min_evaluations=20,
+        calibrations=(
+            BasketProbabilityCalibration(
+                basket=("AAA", "BBB"),
+                accepted_evaluations=30,
+                calibration=_calibration(),
+            ),
+        ),
+        skipped={},
+    )
+
+
 def test_portfolio_config_round_trip(tmp_path):
-    """Portfolio configuration should preserve normalized holdings."""
+    """Portfolio configuration should preserve normalized holdings and model paths."""
     config = PortfolioConfig(
         holdings={"aaa": 2.5, "bbb": 0.0},
         cash=500.0,
         watchlist_path="watchlist.json",
         validation_path="validation.json",
+        basket_calibration_path="basket_calibration.json",
     )
     path = config.save(tmp_path / "portfolio.json")
     loaded = PortfolioConfig.load(path)
     assert loaded.holdings == {"AAA": 2.5, "BBB": 0.0}
     assert loaded.cash == 500.0
     assert loaded.validation_path == "validation.json"
+    assert loaded.basket_calibration_path == "basket_calibration.json"
 
 
 def test_probability_calibration_round_trip(tmp_path):
@@ -186,3 +205,55 @@ def test_weak_validation_profile_gates_live_actions(tmp_path):
         assert item.probability_outperform is not None
         assert item.basket_validation[0]["status"] == "weak"
         assert any("No supporting basket" in warning for warning in item.warnings)
+
+
+def test_basket_specific_calibration_replaces_pooled_probability(tmp_path):
+    """Eligible basket calibrations should be the live probability source."""
+    watchlist_path = BasketWatchlist(baskets=(("AAA", "BBB"),)).save(
+        tmp_path / "watchlist.json"
+    )
+    validation_path = _validation("validated").save(tmp_path / "validation.json")
+    basket_calibration_path = _basket_calibration().save(tmp_path / "basket_calibration.json")
+    config = PortfolioConfig(
+        holdings={"AAA": 0.0, "BBB": 1.0},
+        watchlist_path=str(watchlist_path),
+        validation_path=str(validation_path),
+        basket_calibration_path=str(basket_calibration_path),
+        z_window=30,
+        min_trace_ratio=0.01,
+    )
+    report = PortfolioAnalyzer(_FakeDataManager(_prices())).run(config)
+    assert report.metadata["calibration_mode"] == "basket_specific"
+    assert report.metadata["basket_calibration_count"] == 1
+    assert all(item.probability_outperform is not None for item in report.tickers)
+    assert all(item.probability_sources == ("AAA, BBB",) for item in report.tickers)
+
+
+def test_missing_basket_calibration_gates_validated_basket(tmp_path):
+    """Validated baskets without enough calibration history should stay non-actionable."""
+    watchlist_path = BasketWatchlist(baskets=(("AAA", "BBB"),)).save(
+        tmp_path / "watchlist.json"
+    )
+    validation_path = _validation("validated").save(tmp_path / "validation.json")
+    empty = BasketCalibrationSet(
+        generated_at_utc="2026-08-11T12:00:00+00:00",
+        min_evaluations=20,
+        calibrations=(),
+        skipped={"AAA, BBB": "only 19 independent evaluations; requires 20"},
+    )
+    basket_calibration_path = empty.save(tmp_path / "basket_calibration.json")
+    config = PortfolioConfig(
+        holdings={"AAA": 0.0, "BBB": 1.0},
+        watchlist_path=str(watchlist_path),
+        validation_path=str(validation_path),
+        basket_calibration_path=str(basket_calibration_path),
+        z_window=30,
+        min_trace_ratio=0.01,
+    )
+    report = PortfolioAnalyzer(_FakeDataManager(_prices())).run(config)
+    for item in report.tickers:
+        expected = "Hold" if item.held_quantity > 0 else "Wait"
+        assert item.recommendation == expected
+        assert item.probability_outperform is None
+        assert not item.probability_sources
+        assert any("no eligible basket-specific" in warning.lower() for warning in item.warnings)
