@@ -39,9 +39,20 @@ def _normalized_symbol(value: str) -> str:
 
 
 def _currency_family(value: str) -> str:
-    """Normalize quote-currency aliases used by brokers and Yahoo."""
+    """Normalize quote-currency aliases used by brokers and Yahoo.
+
+    Parameters
+    ----------
+    value
+        Currency or quote-unit label.
+
+    Returns
+    -------
+    str
+        Normalized currency family.
+    """
     currency = str(value).strip().upper()
-    return "GBP" if currency in {"GBP", "GBX", "GBPENCE", "GBPENNY", "GBPENCE"} else currency
+    return "GBP" if currency in {"GBP", "GBX", "GBPENCE", "GBPENNY"} else currency
 
 
 def load_trading212_instruments(
@@ -124,7 +135,7 @@ def filter_trading212_tickers(
     analysis_currency: str,
     instruments: list[dict[str, object]],
 ) -> tuple[tuple[str, ...], dict[str, str]]:
-    """Keep only Yahoo tickers that have a matching tradable Trading 212 stock.
+    """Keep Yahoo tickers that match accessible Trading 212 stocks.
 
     Parameters
     ----------
@@ -146,9 +157,6 @@ def filter_trading212_tickers(
     matches: dict[str, list[str]] = {}
     for item in instruments:
         if str(item.get("type", "")).upper() != "STOCK":
-            continue
-        max_quantity = item.get("maxOpenQuantity")
-        if max_quantity is not None and float(max_quantity) <= 0.0:
             continue
         if _currency_family(str(item.get("currencyCode", ""))) != currency:
             continue
