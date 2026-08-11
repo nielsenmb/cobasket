@@ -90,4 +90,4 @@ def test_update_portfolio_writes_calibration_path(tmp_path):
 
     _update_portfolio_calibration(portfolio, calibration)
     payload = json.loads(portfolio.read_text(encoding="utf-8"))
-    assert payload["calibration_path"] == "probability_calibration.json"
+    assert payload["calibration_path"] == str(calibration.resolve())
