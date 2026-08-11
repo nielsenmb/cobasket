@@ -10,12 +10,18 @@ import pandas as pd
 from .cleaning import align_prices, clean_prices
 from .exceptions import CacheError, CobasketDataError, DownloadError, ValidationError
 from .manager import DataManager, PriceMetadata
+from .trading212 import filter_trading212_tickers, load_trading212_instruments
 from .universe import (
     UniverseSpec,
     get_eurostoxx50_tickers,
     get_ftse100_tickers,
+    get_ftse250_tickers,
+    get_ftse350_tickers,
     get_nasdaq100_tickers,
+    get_sp400_tickers,
     get_sp500_tickers,
+    get_sp600_tickers,
+    get_sp1500_tickers,
     get_universe,
     load_custom_tickers,
 )
@@ -87,11 +93,18 @@ __all__ = [
     "clean_prices",
     "fetch_prices",
     "fetch_universe",
+    "filter_trading212_tickers",
     "get_eurostoxx50_tickers",
     "get_ftse100_tickers",
+    "get_ftse250_tickers",
+    "get_ftse350_tickers",
     "get_nasdaq100_tickers",
+    "get_sp400_tickers",
     "get_sp500_tickers",
+    "get_sp600_tickers",
+    "get_sp1500_tickers",
     "get_universe",
     "load_custom_tickers",
+    "load_trading212_instruments",
     "validate_prices",
 ]
