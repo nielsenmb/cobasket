@@ -77,7 +77,7 @@ cp examples/portfolio.json .
 cp examples/portfolio_watchlist.json .
 ```
 
-The example starts with no shares held and $10,000 in uninvested cash. Edit the ticker quantities and baskets before treating it as your portfolio state.
+The example starts with no shares held and $10,000 in uninvested cash. Its basket is illustrative and may fail the current cointegration threshold; use the screening workflow below to discover current candidates.
 
 Generate a report:
 
@@ -102,17 +102,29 @@ Backtest a basket:
 cobasket-backtest XOM CVX COP OXY --period 2y
 ```
 
-Screen a universe using residual correlation:
+Screen the S&P 500 using residual correlation and write the 20 highest-ranked successfully backtested baskets directly to a watchlist:
 
 ```bash
-cobasket-screen --period 2y --distance-threshold 0.8
+cobasket-screen \
+    --period 5y \
+    --top-n 20 \
+    --watchlist-out screened_watchlist.json
 ```
 
-Screen using PCA factor loadings:
+The S&P 500 constituent list is cached in `price_cache/sp500_tickers.csv`. Cobasket performs an explicit HTTP request on the first run and falls back to an existing cached constituent list if a later refresh fails.
+
+Screen using PCA factor loadings and export the ranked survivors in the same format:
 
 ```bash
-cobasket-pca-screen --period 2y --n-remove 1 --distance-threshold 1.5
+cobasket-pca-screen \
+    --period 5y \
+    --n-remove 1 \
+    --distance-threshold 1.5 \
+    --top-n 20 \
+    --watchlist-out pca_watchlist.json
 ```
+
+The exported JSON files can be passed directly to `cobasket-report` or opened in the GUI watchlist editor.
 
 ## Python example
 
