@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 import json
+import logging
 import os
 from pathlib import Path
 import warnings
@@ -256,6 +257,12 @@ def main() -> None:
     parser.add_argument("--force-refresh", action="store_true")
     args = parser.parse_args()
 
+    # yfinance logs provider-level 404s directly to stderr. Cobasket handles
+    # unavailable constituents itself, so keep the CLI output focused on the
+    # summarized skipped-symbol warning instead of presenting provider noise as
+    # a fatal workflow error.
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
     universe = get_universe(
         args.universe,
         force_refresh=args.force_refresh,
@@ -284,12 +291,14 @@ def main() -> None:
         universe = replace(universe, tickers=filtered)
         print(
             f"Trading 212 filter retained {len(filtered)} of {original_count} "
-            f"{universe.name} constituents."
+            f"{universe.name} constituents.",
+            flush=True,
         )
 
     print(
         f"Discovering baskets across {len(universe.tickers)} {universe.name} tickers "
-        f"({universe.analysis_currency}; market proxy {universe.market_ticker})..."
+        f"({universe.analysis_currency}; market proxy {universe.market_ticker})...",
+        flush=True,
     )
     with warnings.catch_warnings():
         warnings.filterwarnings(
