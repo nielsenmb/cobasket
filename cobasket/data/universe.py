@@ -202,10 +202,9 @@ def _yahoo_london_ticker(value: str) -> str:
         Yahoo-compatible London ticker.
     """
     symbol = str(value).strip().upper()
-    if symbol.endswith(".L"):
-        base = symbol[:-2]
-        return f"{base.replace('.', '-')}.L"
-    return f"{symbol.replace('.', '-')}.L"
+    base = symbol[:-2] if symbol.endswith(".L") else symbol
+    base = base.rstrip(".")
+    return f"{base.replace('.', '-')}.L"
 
 
 def _yahoo_ftse250_share(value: str) -> str:
