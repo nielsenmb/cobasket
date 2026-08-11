@@ -1,6 +1,8 @@
 """Command-line entry points: cobasket-backtest, cobasket-screen, cobasket-pca-screen."""
 
 import argparse
+from contextlib import contextmanager
+import warnings
 
 import matplotlib.pyplot as plt
 
@@ -10,6 +12,23 @@ from cobasket.data import fetch_prices, get_sp500_tickers
 from cobasket.evidence import BasketWatchlist
 from cobasket.pca import cluster_by_loadings, pca_screen_universe
 from cobasket.plotting import plot_dendrogram, plot_loadings_2d, plot_scree
+
+
+@contextmanager
+def _quiet_statsmodels_complex_casts():
+    """Suppress a known internal statsmodels complex-cast warning.
+
+    Yields
+    ------
+    None
+        Context in which only the matching warning message is suppressed.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Casting complex values to real discards the imaginary part",
+        )
+        yield
 
 
 def _save_ranked_watchlist(results, path: str, top_n: int, name: str) -> None:
@@ -48,7 +67,8 @@ def backtest_cmd():
     args = parser.parse_args()
 
     prices = fetch_prices(args.tickers, args.period)
-    result = backtest_single_basket(prices, args.tickers, cost_bps=args.cost_bps)
+    with _quiet_statsmodels_complex_casts():
+        result = backtest_single_basket(prices, args.tickers, cost_bps=args.cost_bps)
 
     fig, axes = plt.subplots(4, 1, figsize=(10, 10), sharex=True)
     result["trading_prices"].plot(ax=axes[0], title="Prices (trading window)")
@@ -77,12 +97,13 @@ def screen_cmd():
 
     tickers = get_sp500_tickers(force_refresh=args.force_refresh)
     print(f"Screening {len(tickers)} tickers...")
-    confirmed, prices, _, _ = screen_universe(
-        tickers,
-        period=args.period,
-        distance_threshold=args.distance_threshold,
-        min_trace_stat_ratio=args.min_trace_stat_ratio,
-    )
+    with _quiet_statsmodels_complex_casts():
+        confirmed, prices, _, _ = screen_universe(
+            tickers,
+            period=args.period,
+            distance_threshold=args.distance_threshold,
+            min_trace_stat_ratio=args.min_trace_stat_ratio,
+        )
 
     print(f"\n{len(confirmed)} confirmed cointegrated basket(s):")
     for basket, _, _, _ in confirmed:
@@ -90,7 +111,8 @@ def screen_cmd():
 
     if confirmed:
         print("\nBacktesting confirmed baskets (may take a while)...")
-        results = rank_confirmed_baskets(confirmed, prices, cost_bps=args.cost_bps)
+        with _quiet_statsmodels_complex_casts():
+            results = rank_confirmed_baskets(confirmed, prices, cost_bps=args.cost_bps)
         print_ranked_results(results, top_n=args.top_n)
         if args.watchlist_out:
             _save_ranked_watchlist(results, args.watchlist_out, args.top_n, f"Cobasket correlation screen ({args.period})")
@@ -117,15 +139,16 @@ def pca_screen_cmd():
 
     tickers = get_sp500_tickers(force_refresh=args.force_refresh)
     print(f"Screening {len(tickers)} tickers via PCA...")
-    confirmed, prices, pca, loadings, _ = pca_screen_universe(
-        tickers,
-        period=args.period,
-        n_components=args.n_components,
-        n_remove=args.n_remove,
-        n_components_for_clustering=args.n_components_for_clustering,
-        distance_threshold=args.distance_threshold,
-        min_trace_stat_ratio=args.min_trace_stat_ratio,
-    )
+    with _quiet_statsmodels_complex_casts():
+        confirmed, prices, pca, loadings, _ = pca_screen_universe(
+            tickers,
+            period=args.period,
+            n_components=args.n_components,
+            n_remove=args.n_remove,
+            n_components_for_clustering=args.n_components_for_clustering,
+            distance_threshold=args.distance_threshold,
+            min_trace_stat_ratio=args.min_trace_stat_ratio,
+        )
 
     print(f"\nSaved {plot_scree(pca, path=f'{args.plot_dir}/pca_scree.png')}")
     candidate_baskets, linkage_matrix = cluster_by_loadings(loadings, args.n_components_for_clustering, args.distance_threshold)
@@ -139,7 +162,8 @@ def pca_screen_cmd():
 
     if confirmed:
         print("\nBacktesting confirmed baskets (may take a while)...")
-        results = rank_confirmed_baskets(confirmed, prices, cost_bps=args.cost_bps)
+        with _quiet_statsmodels_complex_casts():
+            results = rank_confirmed_baskets(confirmed, prices, cost_bps=args.cost_bps)
         print_ranked_results(results, top_n=args.top_n)
         if args.watchlist_out:
             _save_ranked_watchlist(results, args.watchlist_out, args.top_n, f"Cobasket PCA screen ({args.period})")
