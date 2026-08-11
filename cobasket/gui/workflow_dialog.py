@@ -164,7 +164,7 @@ class WorkflowDialog(QDialog):
 
         primary_row = QHBoxLayout()
         self.next_button = QPushButton("Next step")
-        self.update_button = QPushButton("Update to current report")
+        self.update_button = QPushButton("Update required stages to report")
         primary_row.addWidget(self.next_button, 1)
         primary_row.addWidget(self.update_button)
         outer.addLayout(primary_row)
@@ -354,16 +354,20 @@ class WorkflowDialog(QDialog):
         stage_lines = [f"{index}. {name}: {status}" for index, (name, status) in enumerate(state.stage_statuses, 1)]
         self.stage_status_label.setText("\n".join(stage_lines))
         self.next_button.setText(state.next_label)
-        self.update_button.setText(
-            "Update required stages to report" if len(state.update_stages) > 1 else "Update current report"
-        )
+
         has_portfolio = (self.workspace() / "portfolio.json").exists()
         has_report = (self.workspace() / "report.json").exists()
         idle = self._process is None
+        multiple_updates = len(state.update_stages) > 1
+
         self.next_button.setEnabled(idle)
-        self.update_button.setEnabled(idle)
-        self.rediscover_button.setEnabled(idle)
+        self.update_button.setVisible(multiple_updates)
+        self.update_button.setEnabled(multiple_updates and idle)
+        self.rediscover_button.setVisible(state.name != "empty")
+        self.rediscover_button.setEnabled(state.name != "empty" and idle)
+        self.open_portfolio_button.setVisible(has_portfolio)
         self.open_portfolio_button.setEnabled(has_portfolio and idle)
+        self.load_report_button.setVisible(has_report)
         self.load_report_button.setEnabled(has_report and idle)
 
     def _edit_portfolio(self) -> None:
