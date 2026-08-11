@@ -9,6 +9,7 @@ from pathlib import Path
 from cobasket.basket_calibration import fit_basket_calibrations
 from cobasket.basket_validation import BasketValidationSet
 from cobasket.config_paths import resolve_portfolio_config_paths
+from cobasket.thresholds import MIN_ACCEPTED_EVALUATIONS
 from cobasket.workflow import PortfolioConfig
 
 
@@ -43,7 +44,12 @@ def main() -> None:
     parser.add_argument("--portfolio", required=True, help="Portfolio configuration JSON")
     parser.add_argument("--validation", help="Basket validation JSON; defaults to validation_path in portfolio")
     parser.add_argument("--output", default="basket_calibration.json", help="Basket calibration JSON output")
-    parser.add_argument("--min-evaluations", type=int, default=20, help="Minimum independent evaluation dates")
+    parser.add_argument(
+        "--min-evaluations",
+        type=int,
+        default=MIN_ACCEPTED_EVALUATIONS,
+        help="Minimum independent evaluation dates",
+    )
     parser.add_argument("--train-window", type=int, default=252, help="Trailing fit window in trading days")
     parser.add_argument("--horizon", type=int, default=20, help="Forward outcome horizon in trading days")
     parser.add_argument("--step", type=int, default=20, help="Spacing between historical evaluations")
