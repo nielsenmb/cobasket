@@ -11,6 +11,7 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtWidgets import QApplication
 
 from cobasket.gui.dashboard import CobasketDashboard, classify_cobasket_json
+from cobasket.gui.guided_dashboard import GuidedCobasketDashboard
 from cobasket.gui.models import portfolio_report_from_dict
 
 
@@ -56,6 +57,16 @@ def test_dashboard_displays_report_without_network_access():
     window.set_report(portfolio_report_from_dict(_report_payload()))
     assert window.table.rowCount() == 1
     assert window.total_value_label.text() == "Total value: $300.00"
+    window.close()
+    app.processEvents()
+
+
+def test_guided_dashboard_constructs_workflow_menu():
+    """The guided dashboard should start and expose its workflow menu."""
+    app = QApplication.instance() or QApplication([])
+    window = GuidedCobasketDashboard()
+    menus = [action.text() for action in window.menuBar().actions()]
+    assert "Workflow" in menus
     window.close()
     app.processEvents()
 
