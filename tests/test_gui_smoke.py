@@ -37,12 +37,15 @@ def _report_payload():
                 "recommendation": "Add",
                 "explanation": "Positive relative evidence.",
                 "basket_memberships": [["AAPL", "MSFT"]],
+                "native_currency": "USD",
+                "base_currency": "USD",
+                "fx_rate_to_base": 1.0,
                 "warnings": [],
             }
         ],
         "basket_diagnostics": [],
         "warnings": [],
-        "metadata": {},
+        "metadata": {"base_currency": "USD"},
     }
 
 

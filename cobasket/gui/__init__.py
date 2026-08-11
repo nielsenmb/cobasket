@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["CobasketDashboard", "EditableCobasketDashboard", "main"]
+__all__ = ["CobasketDashboard", "EditableCobasketDashboard", "GuidedCobasketDashboard", "main"]
 
 
 def __getattr__(name: str) -> Any:
@@ -17,11 +17,15 @@ def __getattr__(name: str) -> Any:
         from .dashboard import CobasketDashboard
 
         return CobasketDashboard
-    if name in {"EditableCobasketDashboard", "main"}:
-        from .editable_dashboard import EditableCobasketDashboard, main
+    if name == "EditableCobasketDashboard":
+        from .editable_dashboard import EditableCobasketDashboard
+
+        return EditableCobasketDashboard
+    if name in {"GuidedCobasketDashboard", "main"}:
+        from .guided_dashboard import GuidedCobasketDashboard, main
 
         return {
-            "EditableCobasketDashboard": EditableCobasketDashboard,
+            "GuidedCobasketDashboard": GuidedCobasketDashboard,
             "main": main,
         }[name]
     raise AttributeError(name)
