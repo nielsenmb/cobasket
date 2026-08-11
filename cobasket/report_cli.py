@@ -4,31 +4,19 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
+from pathlib import Path
 import warnings
 
 import numpy as np
 
+from cobasket.config_paths import resolve_portfolio_config_paths
 from cobasket.data import DataManager
 from cobasket.evidence import BasketWatchlist, cointegration_evidence
 from cobasket.workflow import PortfolioAnalyzer, PortfolioConfig
 
 
 def _diagnose_failed_baskets(config: PortfolioConfig, manager: DataManager) -> tuple[str, ...]:
-    """Return readable reasons for baskets that cannot produce current evidence.
-
-    Parameters
-    ----------
-    config
-        Portfolio configuration used for the live report.
-    manager
-        Data manager used by the report so the diagnostic pass can reuse cached
-        adjusted prices.
-
-    Returns
-    -------
-    tuple of str
-        One message per basket that fails current evaluation.
-    """
+    """Return readable reasons for baskets that cannot produce current evidence."""
     watchlist = BasketWatchlist.load(config.watchlist_path)
     prices = manager.prices(watchlist.tickers, period=config.period, min_coverage=1.0)
     failures: list[str] = []
@@ -50,28 +38,26 @@ def _diagnose_failed_baskets(config: PortfolioConfig, manager: DataManager) -> t
 
 
 def main() -> None:
-    """Generate and save a current portfolio report.
-
-    Returns
-    -------
-    None
-    """
+    """Generate and save a current portfolio report."""
     parser = argparse.ArgumentParser(
         description="Generate a current long-only Cobasket portfolio report."
     )
     parser.add_argument("--portfolio", required=True, help="Portfolio configuration JSON")
     parser.add_argument("--watchlist", help="Override the watchlist path in the configuration")
     parser.add_argument("--calibration", help="Override the calibration path in the configuration")
+    parser.add_argument("--validation", help="Override the basket-validation path in the configuration")
     parser.add_argument("--period", help="Override the historical download period")
     parser.add_argument("--output", default="cobasket_report.json", help="Output report JSON")
     parser.add_argument("--force-refresh", action="store_true", help="Bypass valid price caches")
     args = parser.parse_args()
 
-    config = PortfolioConfig.load(args.portfolio)
+    portfolio_path = Path(args.portfolio).expanduser().resolve()
+    config = resolve_portfolio_config_paths(PortfolioConfig.load(portfolio_path), portfolio_path)
     payload = {
         **config.__dict__,
         "watchlist_path": args.watchlist or config.watchlist_path,
         "calibration_path": args.calibration or config.calibration_path,
+        "validation_path": args.validation or config.validation_path,
         "period": args.period or config.period,
     }
     resolved = PortfolioConfig(**payload)
