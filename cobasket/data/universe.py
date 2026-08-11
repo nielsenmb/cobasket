@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
+import re
 from urllib.request import Request, urlopen
 import warnings
 
@@ -14,8 +15,11 @@ from .exceptions import DownloadError
 
 
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+SP400_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies"
+SP600_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies"
 NASDAQ100_URL = "https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies"
 FTSE100_URL = "https://en.wikipedia.org/wiki/FTSE_100_Index"
+FTSE250_URL = "https://www.lse.co.uk/indices/ftse-250/constituents.html"
 EUROSTOXX50_URL = "https://en.wikipedia.org/wiki/EURO_STOXX_50"
 
 
@@ -168,6 +172,22 @@ def _cached_tickers(
     return tickers
 
 
+def _yahoo_us_ticker(value: str) -> str:
+    """Normalize a US ticker to Yahoo share-class notation.
+
+    Parameters
+    ----------
+    value
+        Exchange ticker symbol.
+
+    Returns
+    -------
+    str
+        Yahoo-compatible ticker symbol.
+    """
+    return str(value).strip().upper().replace(".", "-")
+
+
 def _yahoo_london_ticker(value: str) -> str:
     """Convert an LSE EPIC symbol or stale cached ticker to Yahoo notation.
 
@@ -188,6 +208,24 @@ def _yahoo_london_ticker(value: str) -> str:
     return f"{symbol.replace('.', '-')}.L"
 
 
+def _yahoo_ftse250_share(value: str) -> str:
+    """Extract an EPIC code from a FTSE 250 share label and convert it for Yahoo.
+
+    Parameters
+    ----------
+    value
+        Constituent label such as ``"3i Infrastructure (3IN)"`` or a bare EPIC.
+
+    Returns
+    -------
+    str
+        Yahoo-compatible London ticker.
+    """
+    text = str(value).strip()
+    match = re.search(r"\(([^()]+)\)\s*$", text)
+    return _yahoo_london_ticker(match.group(1) if match else text)
+
+
 def get_sp500_tickers(
     cache_dir: str | Path = "price_cache",
     *,
@@ -199,7 +237,7 @@ def get_sp500_tickers(
         return pd.read_csv(cache_path)["ticker"].astype(str).tolist()
     try:
         table = _download_sp500_table()
-        tickers = table["Symbol"].astype(str).str.replace(".", "-", regex=False).tolist()
+        tickers = table["Symbol"].astype(str).map(_yahoo_us_ticker).tolist()
     except DownloadError:
         if cache_path.exists():
             warnings.warn(
@@ -214,6 +252,40 @@ def get_sp500_tickers(
     return tickers
 
 
+def get_sp400_tickers(cache_dir: str | Path = "price_cache", *, force_refresh: bool = False) -> list[str]:
+    """Return current S&P MidCap 400 Yahoo-compatible symbols."""
+    return _cached_tickers(
+        name="sp400",
+        url=SP400_URL,
+        column_candidates=("Symbol", "Ticker"),
+        cache_dir=cache_dir,
+        force_refresh=force_refresh,
+        transform=_yahoo_us_ticker,
+    )
+
+
+def get_sp600_tickers(cache_dir: str | Path = "price_cache", *, force_refresh: bool = False) -> list[str]:
+    """Return current S&P SmallCap 600 Yahoo-compatible symbols."""
+    return _cached_tickers(
+        name="sp600",
+        url=SP600_URL,
+        column_candidates=("Symbol", "Ticker"),
+        cache_dir=cache_dir,
+        force_refresh=force_refresh,
+        transform=_yahoo_us_ticker,
+    )
+
+
+def get_sp1500_tickers(cache_dir: str | Path = "price_cache", *, force_refresh: bool = False) -> list[str]:
+    """Return the S&P Composite 1500 as the union of its 500/400/600 components."""
+    groups = (
+        get_sp500_tickers(cache_dir, force_refresh=force_refresh),
+        get_sp400_tickers(cache_dir, force_refresh=force_refresh),
+        get_sp600_tickers(cache_dir, force_refresh=force_refresh),
+    )
+    return list(dict.fromkeys(ticker for group in groups for ticker in group))
+
+
 def get_nasdaq100_tickers(cache_dir: str | Path = "price_cache", *, force_refresh: bool = False) -> list[str]:
     """Return current Nasdaq-100 Yahoo-compatible symbols."""
     return _cached_tickers(
@@ -222,7 +294,7 @@ def get_nasdaq100_tickers(cache_dir: str | Path = "price_cache", *, force_refres
         column_candidates=("Ticker", "Symbol"),
         cache_dir=cache_dir,
         force_refresh=force_refresh,
-        transform=lambda value: value.replace(".", "-"),
+        transform=_yahoo_us_ticker,
     )
 
 
@@ -236,6 +308,27 @@ def get_ftse100_tickers(cache_dir: str | Path = "price_cache", *, force_refresh:
         force_refresh=force_refresh,
         transform=_yahoo_london_ticker,
     )
+
+
+def get_ftse250_tickers(cache_dir: str | Path = "price_cache", *, force_refresh: bool = False) -> list[str]:
+    """Return current FTSE 250 symbols using Yahoo's ``.L`` notation."""
+    return _cached_tickers(
+        name="ftse250",
+        url=FTSE250_URL,
+        column_candidates=("Ticker", "EPIC", "Code", "Share"),
+        cache_dir=cache_dir,
+        force_refresh=force_refresh,
+        transform=_yahoo_ftse250_share,
+    )
+
+
+def get_ftse350_tickers(cache_dir: str | Path = "price_cache", *, force_refresh: bool = False) -> list[str]:
+    """Return the FTSE 350 as the union of FTSE 100 and FTSE 250 constituents."""
+    groups = (
+        get_ftse100_tickers(cache_dir, force_refresh=force_refresh),
+        get_ftse250_tickers(cache_dir, force_refresh=force_refresh),
+    )
+    return list(dict.fromkeys(ticker for group in groups for ticker in group))
 
 
 def get_eurostoxx50_tickers(cache_dir: str | Path = "price_cache", *, force_refresh: bool = False) -> list[str]:
@@ -289,7 +382,7 @@ def get_universe(
     Parameters
     ----------
     name
-        One of ``sp500``, ``nasdaq100``, ``ftse100``, ``eurostoxx50``, or ``custom``.
+        Built-in universe name, or ``custom``.
     cache_dir
         Constituent-cache directory.
     force_refresh
@@ -311,10 +404,20 @@ def get_universe(
     key = str(name).strip().lower()
     if key == "sp500":
         return UniverseSpec(key, tuple(get_sp500_tickers(cache_dir, force_refresh=force_refresh)), "SPY", "USD", "USD")
+    if key == "sp400":
+        return UniverseSpec(key, tuple(get_sp400_tickers(cache_dir, force_refresh=force_refresh)), "^SP400", "USD", "USD")
+    if key == "sp600":
+        return UniverseSpec(key, tuple(get_sp600_tickers(cache_dir, force_refresh=force_refresh)), "^SP600", "USD", "USD")
+    if key == "sp1500":
+        return UniverseSpec(key, tuple(get_sp1500_tickers(cache_dir, force_refresh=force_refresh)), "^SP1500", "USD", "USD")
     if key == "nasdaq100":
         return UniverseSpec(key, tuple(get_nasdaq100_tickers(cache_dir, force_refresh=force_refresh)), "QQQ", "USD", "USD")
     if key == "ftse100":
         return UniverseSpec(key, tuple(get_ftse100_tickers(cache_dir, force_refresh=force_refresh)), "^FTSE", "GBp", "GBP", 0.01)
+    if key == "ftse250":
+        return UniverseSpec(key, tuple(get_ftse250_tickers(cache_dir, force_refresh=force_refresh)), "^FTMC", "GBp", "GBP", 0.01)
+    if key == "ftse350":
+        return UniverseSpec(key, tuple(get_ftse350_tickers(cache_dir, force_refresh=force_refresh)), "^FTLC", "GBp", "GBP", 0.01)
     if key == "eurostoxx50":
         return UniverseSpec(key, tuple(get_eurostoxx50_tickers(cache_dir, force_refresh=force_refresh)), "^STOXX50E", "EUR", "EUR")
     if key == "custom":
