@@ -103,6 +103,28 @@ def _download_sp500_table() -> pd.DataFrame:
     raise DownloadError("sp500 constituent page did not contain a Symbol column")
 
 
+def _normalize_cached_tickers(cache_path: Path, transform) -> list[str]:
+    """Normalize cached ticker symbols and update stale cache entries in place.
+
+    Parameters
+    ----------
+    cache_path
+        CSV cache containing a ``ticker`` column.
+    transform
+        Callable converting a cached symbol to current Yahoo-compatible notation.
+
+    Returns
+    -------
+    list of str
+        De-duplicated normalized ticker symbols.
+    """
+    raw = pd.read_csv(cache_path)["ticker"].astype(str).tolist()
+    tickers = list(dict.fromkeys(transform(value.strip()) for value in raw if value.strip()))
+    if tickers != raw:
+        pd.DataFrame({"ticker": tickers}).to_csv(cache_path, index=False)
+    return tickers
+
+
 def _cached_tickers(
     *,
     name: str,
@@ -112,10 +134,10 @@ def _cached_tickers(
     force_refresh: bool,
     transform,
 ) -> list[str]:
-    """Retrieve one HTML-table universe with a local constituent cache."""
+    """Retrieve one HTML-table universe with a normalized local constituent cache."""
     cache_path = Path(cache_dir) / f"{name}_tickers.csv"
     if cache_path.exists() and not force_refresh:
-        return pd.read_csv(cache_path)["ticker"].astype(str).tolist()
+        return _normalize_cached_tickers(cache_path, transform)
 
     try:
         tables = _download_tables(url, name)
@@ -138,7 +160,7 @@ def _cached_tickers(
                 RuntimeWarning,
                 stacklevel=2,
             )
-            return pd.read_csv(cache_path)["ticker"].astype(str).tolist()
+            return _normalize_cached_tickers(cache_path, transform)
         raise
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -147,16 +169,12 @@ def _cached_tickers(
 
 
 def _yahoo_london_ticker(value: str) -> str:
-    """Convert an LSE EPIC symbol to Yahoo Finance notation.
-
-    Yahoo uses a hyphen for class/share suffixes that LSE notation expresses
-    with a dot. For example, ``BT.A`` becomes ``BT-A.L`` rather than the invalid
-    ``BT.A.L``.
+    """Convert an LSE EPIC symbol or stale cached ticker to Yahoo notation.
 
     Parameters
     ----------
     value
-        LSE ticker/EPIC symbol.
+        LSE ticker/EPIC symbol or an existing Yahoo-style London symbol.
 
     Returns
     -------
@@ -165,7 +183,8 @@ def _yahoo_london_ticker(value: str) -> str:
     """
     symbol = str(value).strip().upper()
     if symbol.endswith(".L"):
-        return symbol
+        base = symbol[:-2]
+        return f"{base.replace('.', '-')}.L"
     return f"{symbol.replace('.', '-')}.L"
 
 
