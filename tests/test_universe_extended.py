@@ -29,6 +29,17 @@ def test_ftse100_converts_dotted_share_class(monkeypatch, tmp_path):
     assert tickers == ["BT-A.L"]
 
 
+def test_ftse100_upgrades_stale_cached_dotted_symbol(tmp_path):
+    """Old cached ``BT.A.L`` entries should be normalized and rewritten."""
+    cache = tmp_path / "ftse100_tickers.csv"
+    pd.DataFrame({"ticker": ["AZN.L", "BT.A.L"]}).to_csv(cache, index=False)
+
+    tickers = universe_module.get_ftse100_tickers(tmp_path)
+
+    assert tickers == ["AZN.L", "BT-A.L"]
+    assert pd.read_csv(cache)["ticker"].tolist() == ["AZN.L", "BT-A.L"]
+
+
 def test_eurostoxx_preserves_exchange_suffixes(monkeypatch, tmp_path):
     """EURO STOXX symbols already carrying Yahoo exchange suffixes are preserved."""
     monkeypatch.setattr(
