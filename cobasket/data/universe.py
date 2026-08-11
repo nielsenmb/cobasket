@@ -14,7 +14,7 @@ from .exceptions import DownloadError
 
 
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-NASDAQ100_URL = "https://en.wikipedia.org/wiki/Nasdaq-100"
+NASDAQ100_URL = "https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies"
 FTSE100_URL = "https://en.wikipedia.org/wiki/FTSE_100_Index"
 EUROSTOXX50_URL = "https://en.wikipedia.org/wiki/EURO_STOXX_50"
 
