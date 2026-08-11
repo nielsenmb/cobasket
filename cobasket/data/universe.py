@@ -36,8 +36,7 @@ class UniverseSpec:
     analysis_currency
         Monetary unit used for portfolio values after ``price_scale`` is applied.
     price_scale
-        Factor converting quote values to ``analysis_currency``. London equities
-        are commonly quoted in pence, so ``GBp -> GBP`` uses ``0.01``.
+        Factor converting quote values to ``analysis_currency``.
     """
 
     name: str
@@ -87,10 +86,6 @@ def _download_tables(url: str, label: str) -> list[pd.DataFrame]:
 
 def _download_sp500_table() -> pd.DataFrame:
     """Download the S&P 500 constituent table.
-
-    This small compatibility wrapper is retained as a stable test seam for the
-    established S&P 500 cache/fallback behaviour while the generic universe
-    downloader supports additional markets.
 
     Returns
     -------
@@ -151,29 +146,38 @@ def _cached_tickers(
     return tickers
 
 
+def _yahoo_london_ticker(value: str) -> str:
+    """Convert an LSE EPIC symbol to Yahoo Finance notation.
+
+    Yahoo uses a hyphen for class/share suffixes that LSE notation expresses
+    with a dot. For example, ``BT.A`` becomes ``BT-A.L`` rather than the invalid
+    ``BT.A.L``.
+
+    Parameters
+    ----------
+    value
+        LSE ticker/EPIC symbol.
+
+    Returns
+    -------
+    str
+        Yahoo-compatible London ticker.
+    """
+    symbol = str(value).strip().upper()
+    if symbol.endswith(".L"):
+        return symbol
+    return f"{symbol.replace('.', '-')}.L"
+
+
 def get_sp500_tickers(
     cache_dir: str | Path = "price_cache",
     *,
     force_refresh: bool = False,
 ) -> list[str]:
-    """Return current S&P 500 Yahoo-compatible symbols.
-
-    Parameters
-    ----------
-    cache_dir
-        Constituent-cache directory.
-    force_refresh
-        Attempt to refresh the online constituent table first.
-
-    Returns
-    -------
-    list of str
-        Yahoo-compatible S&P 500 ticker symbols.
-    """
+    """Return current S&P 500 Yahoo-compatible symbols."""
     cache_path = Path(cache_dir) / "sp500_tickers.csv"
     if cache_path.exists() and not force_refresh:
         return pd.read_csv(cache_path)["ticker"].astype(str).tolist()
-
     try:
         table = _download_sp500_table()
         tickers = table["Symbol"].astype(str).str.replace(".", "-", regex=False).tolist()
@@ -186,7 +190,6 @@ def get_sp500_tickers(
             )
             return pd.read_csv(cache_path)["ticker"].astype(str).tolist()
         raise
-
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({"ticker": tickers}).to_csv(cache_path, index=False)
     return tickers
@@ -205,14 +208,14 @@ def get_nasdaq100_tickers(cache_dir: str | Path = "price_cache", *, force_refres
 
 
 def get_ftse100_tickers(cache_dir: str | Path = "price_cache", *, force_refresh: bool = False) -> list[str]:
-    """Return current FTSE 100 symbols using Yahoo's ``.L`` suffix."""
+    """Return current FTSE 100 symbols using Yahoo's ``.L`` notation."""
     return _cached_tickers(
         name="ftse100",
         url=FTSE100_URL,
         column_candidates=("Ticker", "EPIC"),
         cache_dir=cache_dir,
         force_refresh=force_refresh,
-        transform=lambda value: value if value.endswith(".L") else f"{value}.L",
+        transform=_yahoo_london_ticker,
     )
 
 
@@ -298,12 +301,13 @@ def get_universe(
     if key == "custom":
         if custom_path is None or custom_market_ticker is None or custom_currency is None:
             raise ValueError("custom universe requires --tickers-file, --market-ticker, and --currency")
+        currency = str(custom_currency).strip().upper()
         return UniverseSpec(
             key,
             tuple(load_custom_tickers(custom_path)),
             str(custom_market_ticker).strip().upper(),
-            str(custom_currency).strip().upper(),
-            str(custom_currency).strip().upper(),
+            currency,
+            currency,
             float(custom_price_scale),
         )
     raise ValueError(f"unknown universe: {name}")
