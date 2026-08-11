@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -20,6 +21,8 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
 )
+
+from .workspace_state import WorkspaceState, inspect_workspace
 
 
 _STAGE_LABELS = {
@@ -104,29 +107,31 @@ def workflow_command(stage: str, *, universe: str, period: str) -> tuple[str, ..
 
 
 class WorkflowDialog(QDialog):
-    """Run discovery, validation, calibration, and reporting from one window."""
+    """Guide the user through the normal Cobasket workspace workflow."""
 
     report_ready = pyqtSignal(str)
     portfolio_ready = pyqtSignal(str)
 
     def __init__(self, workspace: str | Path | None = None, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Cobasket guided workflow")
+        self.setWindowTitle("Cobasket workspace")
         self.resize(900, 700)
         self._process: QProcess | None = None
         self._queue: deque[str] = deque()
         self._active_stage: str | None = None
+        self._state: WorkspaceState | None = None
         self._build_ui()
         initial = Path(workspace) if workspace is not None else Path.cwd()
         self.workspace_edit.setText(str(initial.resolve()))
         self._refresh_status()
 
     def _build_ui(self) -> None:
-        """Construct workflow controls and output console."""
+        """Construct workspace controls, status, and process output."""
         outer = QVBoxLayout(self)
         intro = QLabel(
-            "Use this window for the normal Cobasket path: discover persistent baskets, "
-            "validate them, fit basket-specific probability calibration, then generate a live report."
+            "Choose a workspace directory. Cobasket will inspect what is already there and recommend "
+            "the next step. New workspaces start with discovery; complete workspaces normally only "
+            "need recommendation refreshes."
         )
         intro.setWordWrap(True)
         outer.addWidget(intro)
@@ -144,52 +149,51 @@ class WorkflowDialog(QDialog):
         form.addRow("Discovery universe", self.universe_combo)
         self.period_combo = QComboBox()
         self.period_combo.addItems(("5y", "2y", "10y"))
-        form.addRow("Historical period", self.period_combo)
+        form.addRow("Discovery period", self.period_combo)
         outer.addLayout(form)
 
+        state_box = QGroupBox("Workspace status")
+        state_layout = QVBoxLayout(state_box)
         self.status_label = QLabel()
         self.status_label.setWordWrap(True)
-        outer.addWidget(self.status_label)
+        state_layout.addWidget(self.status_label)
+        self.stage_status_label = QLabel()
+        self.stage_status_label.setWordWrap(True)
+        state_layout.addWidget(self.stage_status_label)
+        outer.addWidget(state_box)
 
-        stage_row = QHBoxLayout()
-        self.discover_button = QPushButton("1. Discover")
-        self.validate_button = QPushButton("2. Validate")
-        self.calibrate_button = QPushButton("3. Calibrate")
-        self.report_button = QPushButton("4. Report")
-        self.run_all_button = QPushButton("Run all")
-        for button in (
-            self.discover_button,
-            self.validate_button,
-            self.calibrate_button,
-            self.report_button,
-            self.run_all_button,
-        ):
-            stage_row.addWidget(button)
-        outer.addLayout(stage_row)
+        primary_row = QHBoxLayout()
+        self.next_button = QPushButton("Next step")
+        self.update_button = QPushButton("Update to current report")
+        primary_row.addWidget(self.next_button, 1)
+        primary_row.addWidget(self.update_button)
+        outer.addLayout(primary_row)
 
-        edit_row = QHBoxLayout()
-        self.open_portfolio_button = QPushButton("Edit portfolio/holdings…")
-        self.load_report_button = QPushButton("Load generated report")
+        secondary_row = QHBoxLayout()
+        self.open_portfolio_button = QPushButton("Edit holdings / portfolio…")
+        self.rediscover_button = QPushButton("Re-run discovery…")
+        self.load_report_button = QPushButton("Show current report")
         close_button = QPushButton("Close")
-        edit_row.addWidget(self.open_portfolio_button)
-        edit_row.addWidget(self.load_report_button)
-        edit_row.addStretch(1)
-        edit_row.addWidget(close_button)
-        outer.addLayout(edit_row)
+        secondary_row.addWidget(self.open_portfolio_button)
+        secondary_row.addWidget(self.rediscover_button)
+        secondary_row.addWidget(self.load_report_button)
+        secondary_row.addStretch(1)
+        secondary_row.addWidget(close_button)
+        outer.addLayout(secondary_row)
 
+        output_box = QGroupBox("Details")
+        output_layout = QVBoxLayout(output_box)
         self.output = QTextEdit()
         self.output.setReadOnly(True)
-        self.output.setPlaceholderText("Workflow output will appear here.")
-        outer.addWidget(self.output, 1)
+        self.output.setPlaceholderText("Output from the current workflow step will appear here.")
+        output_layout.addWidget(self.output)
+        outer.addWidget(output_box, 1)
 
         browse_button.clicked.connect(self._browse_workspace)
-        self.discover_button.clicked.connect(lambda: self._start_sequence(("discover",)))
-        self.validate_button.clicked.connect(lambda: self._start_sequence(("validate",)))
-        self.calibrate_button.clicked.connect(lambda: self._start_sequence(("calibrate",)))
-        self.report_button.clicked.connect(lambda: self._start_sequence(("report",)))
-        self.run_all_button.clicked.connect(
-            lambda: self._start_sequence(("discover", "validate", "calibrate", "report"))
-        )
+        self.workspace_edit.editingFinished.connect(self._refresh_status)
+        self.next_button.clicked.connect(self._run_recommended_step)
+        self.update_button.clicked.connect(self._run_required_updates)
+        self.rediscover_button.clicked.connect(self._confirm_rediscovery)
         self.open_portfolio_button.clicked.connect(self._edit_portfolio)
         self.load_report_button.clicked.connect(self._emit_report)
         close_button.clicked.connect(self.reject)
@@ -205,9 +209,33 @@ class WorkflowDialog(QDialog):
             self.workspace_edit.setText(path)
             self._refresh_status()
 
+    def _run_recommended_step(self) -> None:
+        """Run the single next stage recommended for the current workspace."""
+        state = inspect_workspace(self.workspace())
+        self._start_sequence((state.next_stage,))
+
+    def _run_required_updates(self) -> None:
+        """Run all currently required downstream stages through a live report."""
+        state = inspect_workspace(self.workspace())
+        self._start_sequence(state.update_stages)
+
+    def _confirm_rediscovery(self) -> None:
+        """Confirm and start a fresh basket discovery for the workspace."""
+        workspace = self.workspace()
+        if (workspace / "portfolio.json").exists():
+            answer = QMessageBox.question(
+                self,
+                "Re-run discovery",
+                "Discovery will replace the workspace watchlist and invalidate downstream validation "
+                "and calibration for the old baskets. Holdings and cash are preserved. Continue?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self._start_sequence(("discover",))
+
     def _start_sequence(self, stages: tuple[str, ...]) -> None:
         """Queue one or more workflow stages."""
-        if self._process is not None:
+        if self._process is not None or not stages:
             return
         workspace = self.workspace()
         workspace.mkdir(parents=True, exist_ok=True)
@@ -215,7 +243,7 @@ class WorkflowDialog(QDialog):
             QMessageBox.warning(
                 self,
                 "Portfolio required",
-                "portfolio.json is missing. Run discovery first or choose a workspace containing a Cobasket portfolio.",
+                "This workspace has no portfolio.json. Run discovery first.",
             )
             return
         self._queue = deque(stages)
@@ -250,7 +278,7 @@ class WorkflowDialog(QDialog):
             )
             return
         self._active_stage = stage
-        self.output.append(f"\n=== {_STAGE_LABELS[stage]} ===")
+        self.output.append(f"\n=== {_STAGE_LABELS[stage]} ===\n")
         command = workflow_command(
             stage,
             universe=self.universe_combo.currentText(),
@@ -271,7 +299,9 @@ class WorkflowDialog(QDialog):
             return
         text = bytes(self._process.readAllStandardOutput()).decode(errors="replace")
         if text:
-            self.output.moveCursor(self.output.textCursor().MoveOperation.End)
+            cursor = self.output.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            self.output.setTextCursor(cursor)
             self.output.insertPlainText(text)
             self.output.ensureCursorVisible()
 
@@ -287,7 +317,7 @@ class WorkflowDialog(QDialog):
             QMessageBox.critical(
                 self,
                 "Workflow stage failed",
-                f"{_STAGE_LABELS.get(stage, stage)} exited with code {exit_code}. See the output log for details.",
+                f"{_STAGE_LABELS.get(stage, stage)} exited with code {exit_code}. See Details for the error output.",
             )
             return
         self._refresh_status()
@@ -302,36 +332,39 @@ class WorkflowDialog(QDialog):
     def _set_running(self, running: bool) -> None:
         """Enable or disable controls while a stage is executing."""
         for button in (
-            self.discover_button,
-            self.validate_button,
-            self.calibrate_button,
-            self.report_button,
-            self.run_all_button,
+            self.next_button,
+            self.update_button,
+            self.rediscover_button,
+            self.open_portfolio_button,
+            self.load_report_button,
         ):
             button.setEnabled(not running)
         self.workspace_edit.setEnabled(not running)
         self.universe_combo.setEnabled(not running)
         self.period_combo.setEnabled(not running)
+        if not running:
+            self._refresh_status()
 
     def _refresh_status(self) -> None:
-        """Summarize which workflow artifacts exist in the workspace."""
-        workspace = self.workspace()
-        files = {
-            "portfolio": workspace / "portfolio.json",
-            "watchlist": workspace / "discovered_watchlist.json",
-            "validation": workspace / "basket_validation.json",
-            "calibration": workspace / "basket_calibration.json",
-            "report": workspace / "report.json",
-        }
-        available = [name for name, path in files.items() if path.exists()]
-        if self._process is not None and self._active_stage is not None:
-            prefix = f"Running {_STAGE_LABELS[self._active_stage]}… "
-        else:
-            prefix = ""
-        suffix = ", ".join(available) if available else "no workflow files yet"
-        self.status_label.setText(prefix + "Workspace contains: " + suffix + ".")
-        self.open_portfolio_button.setEnabled(files["portfolio"].exists() and self._process is None)
-        self.load_report_button.setEnabled(files["report"].exists() and self._process is None)
+        """Inspect the workspace and update the recommended action."""
+        state = inspect_workspace(self.workspace())
+        self._state = state
+        prefix = f"Running {_STAGE_LABELS[self._active_stage]}…\n" if self._process and self._active_stage else ""
+        self.status_label.setText(prefix + state.summary)
+        stage_lines = [f"{index}. {name}: {status}" for index, (name, status) in enumerate(state.stage_statuses, 1)]
+        self.stage_status_label.setText("\n".join(stage_lines))
+        self.next_button.setText(state.next_label)
+        self.update_button.setText(
+            "Update required stages to report" if len(state.update_stages) > 1 else "Update current report"
+        )
+        has_portfolio = (self.workspace() / "portfolio.json").exists()
+        has_report = (self.workspace() / "report.json").exists()
+        idle = self._process is None
+        self.next_button.setEnabled(idle)
+        self.update_button.setEnabled(idle)
+        self.rediscover_button.setEnabled(idle)
+        self.open_portfolio_button.setEnabled(has_portfolio and idle)
+        self.load_report_button.setEnabled(has_report and idle)
 
     def _edit_portfolio(self) -> None:
         """Open the generated portfolio in the existing configuration editor."""
