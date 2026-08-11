@@ -7,6 +7,8 @@
   "cash": 10000.0,
   "watchlist_path": "portfolio_watchlist.json",
   "calibration_path": null,
+  "validation_path": null,
+  "basket_calibration_path": null,
   "period": "3y",
   "z_window": 60,
   "min_trace_ratio": 1.0,
