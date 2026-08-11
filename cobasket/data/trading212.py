@@ -18,12 +18,12 @@ _DEMO_URL = "https://demo.trading212.com/api/v0/equity/metadata/instruments"
 
 
 def _normalized_symbol(value: str) -> str:
-    """Normalize Yahoo or broker short symbols for conservative matching.
+    """Normalize Yahoo or broker symbols for conservative matching.
 
     Parameters
     ----------
     value
-        Yahoo ticker or Trading 212 ``shortName``.
+        Yahoo ticker, Trading 212 ``shortName``, or broker ticker prefix.
 
     Returns
     -------
@@ -160,11 +160,16 @@ def filter_trading212_tickers(
             continue
         if _currency_family(str(item.get("currencyCode", ""))) != currency:
             continue
-        short_name = item.get("shortName")
         broker_ticker = item.get("ticker")
-        if not short_name or not broker_ticker:
+        if not broker_ticker:
             continue
-        matches.setdefault(_normalized_symbol(str(short_name)), []).append(str(broker_ticker))
+        broker_ticker = str(broker_ticker)
+        keys = {
+            _normalized_symbol(str(item.get("shortName", ""))),
+            _normalized_symbol(broker_ticker.split("_", 1)[0]),
+        }
+        for key in keys - {""}:
+            matches.setdefault(key, []).append(broker_ticker)
 
     kept: list[str] = []
     mapping: dict[str, str] = {}
