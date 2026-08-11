@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMenu
 
 from .editable_dashboard import EditableCobasketDashboard
 from .workflow_dialog import WorkflowDialog
@@ -16,7 +16,9 @@ class GuidedCobasketDashboard(EditableCobasketDashboard):
 
     def __init__(self) -> None:
         super().__init__()
-        workflow_menu = self.menuBar().insertMenu(self.menuBar().actions()[0], "Workflow")
+        workflow_menu = QMenu("Workflow", self)
+        before = self.menuBar().actions()[0] if self.menuBar().actions() else None
+        self.menuBar().insertMenu(before, workflow_menu)
         guided_action = workflow_menu.addAction("Guided discovery → report…")
         guided_action.triggered.connect(self.open_guided_workflow)
         self._workflow_dialog: WorkflowDialog | None = None
