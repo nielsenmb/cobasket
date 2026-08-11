@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
@@ -46,9 +47,7 @@ def parse_basket_text(text: str) -> tuple[str, ...]:
     ValueError
         If fewer than two unique ticker symbols are supplied.
     """
-    tickers = tuple(
-        dict.fromkeys(part.strip().upper() for part in text.split(",") if part.strip())
-    )
+    tickers = tuple(dict.fromkeys(part.strip().upper() for part in text.split(",") if part.strip()))
     if len(tickers) < 2:
         raise ValueError("each basket must contain at least two unique tickers")
     return tickers
@@ -92,6 +91,7 @@ class ConfigEditorDialog(QDialog):
     def __init__(self, config_path: str | Path, parent=None) -> None:
         super().__init__(parent)
         self.config_path = Path(config_path)
+        self._watchlist_metadata: dict[str, object] = {}
         self.setWindowTitle("Edit Cobasket portfolio")
         self.resize(760, 660)
         self._build_ui()
@@ -114,13 +114,12 @@ class ConfigEditorDialog(QDialog):
         buttons.addWidget(save_button)
         buttons.addWidget(close_button)
         outer.addLayout(buttons)
-
         reload_button.clicked.connect(self.load_files)
         save_button.clicked.connect(self.save_files)
         close_button.clicked.connect(self.reject)
 
     def _build_portfolio_tab(self) -> QWidget:
-        """Create controls for holdings, cash, and analysis settings."""
+        """Create controls for holdings, cash, currency, and analysis settings."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         form = QFormLayout()
@@ -128,7 +127,9 @@ class ConfigEditorDialog(QDialog):
         self.cash_spin = QDoubleSpinBox()
         self.cash_spin.setRange(0.0, 1e12)
         self.cash_spin.setDecimals(2)
-        self.cash_spin.setPrefix("$")
+        self.base_currency_edit = QLineEdit()
+        self.base_currency_edit.setPlaceholderText("native market currency")
+        self.base_currency_edit.setMaxLength(3)
         self.period_edit = QLineEdit("3y")
         self.z_window_spin = QSpinBox()
         self.z_window_spin.setRange(2, 5000)
@@ -142,7 +143,8 @@ class ConfigEditorDialog(QDialog):
         self.validation_edit = QLineEdit()
         self.basket_calibration_edit = QLineEdit()
 
-        form.addRow("Cash", self.cash_spin)
+        form.addRow("Base currency", self.base_currency_edit)
+        form.addRow("Cash (base currency)", self.cash_spin)
         form.addRow("Price history period", self.period_edit)
         form.addRow("Z-score window", self.z_window_spin)
         form.addRow("Minimum trace ratio", self.trace_spin)
@@ -215,8 +217,7 @@ class ConfigEditorDialog(QDialog):
         """Append an editable watchlist-basket row."""
         row = self.baskets_table.rowCount()
         self.baskets_table.insertRow(row)
-        text = ", ".join(basket or ())
-        self.baskets_table.setItem(row, 0, QTableWidgetItem(text))
+        self.baskets_table.setItem(row, 0, QTableWidgetItem(", ".join(basket or ())))
 
     @staticmethod
     def _remove_selected_rows(table: QTableWidget) -> None:
@@ -244,11 +245,14 @@ class ConfigEditorDialog(QDialog):
             if not watchlist_path.is_absolute():
                 watchlist_path = self.config_path.parent / watchlist_path
             watchlist = BasketWatchlist.load(watchlist_path)
+            payload = json.loads(watchlist_path.read_text(encoding="utf-8"))
+            self._watchlist_metadata = dict(payload.get("universe_metadata") or {})
         except Exception as exc:
             QMessageBox.critical(self, "Configuration error", f"Could not load configuration:\n{exc}")
             return
 
         self.cash_spin.setValue(config.cash)
+        self.base_currency_edit.setText(config.base_currency or "")
         self.period_edit.setText(config.period)
         self.z_window_spin.setValue(config.z_window)
         self.trace_spin.setValue(config.min_trace_ratio)
@@ -304,6 +308,7 @@ class ConfigEditorDialog(QDialog):
                 holdings=holdings,
                 cash=self.cash_spin.value(),
                 watchlist_path=str(watchlist_path),
+                base_currency=self.base_currency_edit.text().strip() or None,
                 calibration_path=self.calibration_edit.text().strip() or None,
                 validation_path=self.validation_edit.text().strip() or None,
                 basket_calibration_path=self.basket_calibration_edit.text().strip() or None,
@@ -313,6 +318,10 @@ class ConfigEditorDialog(QDialog):
                 max_price_age_days=self.stale_spin.value(),
             )
             watchlist.save(watchlist_path)
+            if self._watchlist_metadata:
+                payload = json.loads(watchlist_path.read_text(encoding="utf-8"))
+                payload["universe_metadata"] = self._watchlist_metadata
+                watchlist_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
             config.save(self.config_path)
         except Exception as exc:
             QMessageBox.critical(self, "Invalid configuration", str(exc))
