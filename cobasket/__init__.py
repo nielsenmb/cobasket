@@ -1,6 +1,7 @@
 """Transparent cointegration research and long-only decision support."""
 
 from cobasket._version import __version__
+from cobasket.calibration_workflow import WatchlistCalibrationResult, calibrate_watchlist
 from cobasket.continuous_walk_forward import (
     ContinuousDeploymentConfig,
     ContinuousWalkForwardResult,
@@ -40,7 +41,9 @@ __all__ = [
     "StrategyRules",
     "TickerReport",
     "WalkForwardConfig",
+    "WatchlistCalibrationResult",
     "build_price_metrics",
+    "calibrate_watchlist",
     "run_continuous_walk_forward",
     "run_repeated_walk_forward",
     "run_strategy_experiment",
