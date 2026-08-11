@@ -25,11 +25,7 @@ def _update_portfolio_calibration(portfolio_path: Path, calibration_path: Path) 
     None
     """
     payload = json.loads(portfolio_path.read_text(encoding="utf-8"))
-    try:
-        relative = calibration_path.resolve().relative_to(portfolio_path.resolve().parent)
-        payload["calibration_path"] = str(relative)
-    except ValueError:
-        payload["calibration_path"] = str(calibration_path.resolve())
+    payload["calibration_path"] = str(calibration_path.resolve())
     portfolio_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
