@@ -13,6 +13,8 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtWidgets import QApplication
 
 from cobasket.gui.editable_dashboard import EditableCobasketDashboard
+from cobasket.gui.investigation_dialog import BasketInvestigationDialog
+from cobasket.gui.strategy_dialog import StrategySimulationDialog
 
 
 def _report_payload() -> dict[str, object]:
@@ -30,6 +32,32 @@ def _report_payload() -> dict[str, object]:
     }
 
 
+def _write_relative_config(tmp_path):
+    """Write a portfolio whose watchlist path is relative to the config file."""
+    watchlist = tmp_path / "watchlist.json"
+    watchlist.write_text(
+        json.dumps({"name": "test", "baskets": [["AAA", "BBB"]]}),
+        encoding="utf-8",
+    )
+    config = tmp_path / "portfolio.json"
+    config.write_text(
+        json.dumps(
+            {
+                "holdings": {},
+                "cash": 100.0,
+                "watchlist_path": "watchlist.json",
+                "calibration_path": None,
+                "period": "2y",
+                "z_window": 60,
+                "min_trace_ratio": 1.0,
+                "max_price_age_days": 7.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return config
+
+
 def test_history_path_uses_saved_report_directory_when_no_config(tmp_path):
     """A display-only session should look for history beside its saved report."""
     app = QApplication.instance() or QApplication([])
@@ -40,6 +68,22 @@ def test_history_path_uses_saved_report_directory_when_no_config(tmp_path):
     window.report_path_edit.setText(str(report_path))
     assert window._history_path() == tmp_path / "cobasket_history.sqlite"
     window.close()
+    app.processEvents()
+
+
+def test_config_dependent_dialogs_resolve_relative_watchlist_paths(tmp_path):
+    """Dialogs should resolve watchlists relative to portfolio.json, not the shell cwd."""
+    app = QApplication.instance() or QApplication([])
+    config = _write_relative_config(tmp_path)
+
+    investigation = BasketInvestigationDialog(config, "AAA")
+    assert investigation.baskets == (("AAA", "BBB"),)
+    investigation.close()
+
+    simulation = StrategySimulationDialog(config)
+    assert simulation.basket_combo.count() == 1
+    assert tuple(simulation.basket_combo.currentData()) == ("AAA", "BBB")
+    simulation.close()
     app.processEvents()
 
 
