@@ -27,7 +27,7 @@ class EditableCobasketDashboard(CobasketDashboard):
     def __init__(self) -> None:
         super().__init__()
         portfolio_menu = self.menuBar().addMenu("Portfolio")
-        edit_action = portfolio_menu.addAction("Edit portfolio and watchlist…")
+        edit_action = portfolio_menu.addAction("Edit holdings and watchlist…")
         edit_action.triggered.connect(self.edit_configuration)
 
         investigate_action = portfolio_menu.addAction("Investigate selected ticker…")
@@ -37,19 +37,20 @@ class EditableCobasketDashboard(CobasketDashboard):
         history_action = portfolio_menu.addAction("Recommendation history…")
         history_action.triggered.connect(self.open_recommendation_history)
 
-        simulation_action = portfolio_menu.addAction("Simulate basket strategy…")
+        research_menu = self.menuBar().addMenu("Research")
+        simulation_action = research_menu.addAction("Simulate basket strategy…")
         simulation_action.triggered.connect(self.open_strategy_simulation)
 
-        experiment_action = portfolio_menu.addAction("Strategy experiments…")
+        experiment_action = research_menu.addAction("Strategy experiments…")
         experiment_action.triggered.connect(self.open_strategy_experiments)
 
-        repeated_action = portfolio_menu.addAction("Repeated walk-forward experiments…")
+        repeated_action = research_menu.addAction("Repeated walk-forward experiments…")
         repeated_action.triggered.connect(self.open_repeated_walk_forward)
 
-        continuous_action = portfolio_menu.addAction("Continuous walk-forward deployment…")
+        continuous_action = research_menu.addAction("Continuous walk-forward deployment…")
         continuous_action.triggered.connect(self.open_continuous_walk_forward)
 
-        validation_action = portfolio_menu.addAction("Historical validation…")
+        validation_action = research_menu.addAction("Historical policy validation…")
         validation_action.triggered.connect(self.open_validation)
         self._history_dialog: RecommendationHistoryDialog | None = None
         self._investigation_dialog: BasketInvestigationDialog | None = None
@@ -112,7 +113,7 @@ class EditableCobasketDashboard(CobasketDashboard):
             self,
             "Portfolio configuration required",
             f"{action} requires a portfolio configuration JSON file. "
-            "Choose portfolio.json in the Portfolio configuration row first.",
+            "Open the workspace workflow first or enable the manual file controls.",
         )
         return None
 
@@ -144,7 +145,7 @@ class EditableCobasketDashboard(CobasketDashboard):
             return
         if dialog.exec():
             self.status_label.setText(
-                "Portfolio configuration saved. Run analysis to refresh recommendations."
+                "Portfolio configuration saved. Refresh recommendations when ready."
             )
 
     def investigate_selected_ticker(self) -> None:
